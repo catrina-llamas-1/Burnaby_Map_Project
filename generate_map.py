@@ -26,9 +26,11 @@ Output: a .zip file containing map.html (and a small README), ready to
         upload to any static host (GitHub Pages, S3, Netlify, etc).
 """
 
+import hashlib
 import os
 import re
 import shutil
+import urllib.request
 import zipfile
 import warnings
 from html import escape
@@ -88,6 +90,16 @@ MAP_START_ZOOM = 5
 OUTPUT_DIR = "postal_code_map_output"
 OUTPUT_ZIP = "postal_code_map_output.zip"
 OUTPUT_HTML_NAME = "map.html"
+
+# Folium normally links Leaflet/jQuery/Bootstrap/Font Awesome from external
+# CDNs. If the machine opening map.html has no internet access, or a
+# network/firewall blocks any of those CDNs, the map silently fails to
+# render. When True, those library files are downloaded once at generation
+# time and bundled into the zip's assets/ folder so map.html works with no
+# CDN dependency for the map itself (map tile images still need internet,
+# same as any web map). Requires internet access wherever you *run* this
+# script (e.g. Colab), not wherever the map is later opened.
+VENDOR_LIBS_LOCALLY = True
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +410,44 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
 # Step 6: Package output into a zip for static hosting
 # ---------------------------------------------------------------------------
 
+_CDN_REF_PATTERN = re.compile(
+    r'(?P<attr>src|href)="(?P<url>https://[^"]+\.(?:js|css))"'
+)
+
+
+def _localize_cdn_assets(html_text, output_dir):
+    """Download the external Leaflet/jQuery/Bootstrap/Font Awesome files that
+    folium links from CDNs and rewrite the HTML to reference local copies
+    under assets/, so map.html doesn't depend on those CDNs being reachable
+    when someone later opens it. Falls back to leaving the CDN URL in place
+    (with a warning) for anything that fails to download."""
+    assets_dir = os.path.join(output_dir, "assets")
+    os.makedirs(assets_dir, exist_ok=True)
+
+    seen = {}
+
+    def replace(match):
+        attr, url = match.group("attr"), match.group("url")
+        if url not in seen:
+            ext = os.path.splitext(url)[1]
+            digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
+            local_name = f"{digest}{ext}"
+            local_path = os.path.join(assets_dir, local_name)
+            try:
+                with urllib.request.urlopen(url, timeout=20) as resp:
+                    data = resp.read()
+                with open(local_path, "wb") as f:
+                    f.write(data)
+                seen[url] = f"assets/{local_name}"
+            except Exception as exc:  # noqa: BLE001 - best-effort vendoring
+                warnings.warn(f"Could not download {url} for offline use ({exc}); "
+                               f"map.html will still reference it from the CDN.")
+                seen[url] = url
+        return f'{attr}="{seen[url]}"'
+
+    return _CDN_REF_PATTERN.sub(replace, html_text)
+
+
 def package_output(m, output_dir=OUTPUT_DIR, output_zip=OUTPUT_ZIP):
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
@@ -406,19 +456,36 @@ def package_output(m, output_dir=OUTPUT_DIR, output_zip=OUTPUT_ZIP):
     html_path = os.path.join(output_dir, OUTPUT_HTML_NAME)
     m.save(html_path)
 
+    if VENDOR_LIBS_LOCALLY:
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_text = f.read()
+        html_text = _localize_cdn_assets(html_text, output_dir)
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_text)
+
     readme_path = os.path.join(output_dir, "README.txt")
     with open(readme_path, "w") as f:
         f.write(
-            "This folder contains a self-contained interactive map (map.html).\n"
-            "Upload the contents of this folder to any static web host "
-            "(GitHub Pages, S3 static site, Netlify, etc.) and open map.html.\n"
+            "This folder contains an interactive map (map.html) plus its\n"
+            "supporting library files (assets/). Upload BOTH map.html and the\n"
+            "assets/ folder together to any static web host (GitHub Pages, S3\n"
+            "static site, Netlify, etc.), keeping them in the same relative\n"
+            "layout, and open map.html.\n"
+            "\n"
+            "The map itself doesn't need internet access to load (the Leaflet/\n"
+            "jQuery/Bootstrap/Font Awesome files are bundled locally), but the\n"
+            "background map tiles are still fetched live from OpenStreetMap, so\n"
+            "whoever views the map needs internet access for those to appear.\n"
         )
 
     if os.path.exists(output_zip):
         os.remove(output_zip)
     with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for fname in os.listdir(output_dir):
-            zf.write(os.path.join(output_dir, fname), arcname=fname)
+        for root, _dirs, files in os.walk(output_dir):
+            for fname in files:
+                full_path = os.path.join(root, fname)
+                arcname = os.path.relpath(full_path, output_dir)
+                zf.write(full_path, arcname=arcname)
 
     return output_zip
 

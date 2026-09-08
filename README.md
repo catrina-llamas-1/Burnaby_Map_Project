@@ -42,5 +42,10 @@ map title/start location) lives in the `CONFIG` block at the top of
 
 ## Output
 
-`postal_code_map_output.zip` containing `map.html` — a self-contained,
-static, hostable map (GitHub Pages, S3, Netlify, etc.).
+`postal_code_map_output.zip` containing `map.html` and an `assets/` folder
+with its Leaflet/jQuery/Bootstrap/Font Awesome files bundled locally, so the
+map doesn't depend on any CDN being reachable when someone opens it later.
+Upload both `map.html` and `assets/` together, keeping their relative layout,
+to any static host (GitHub Pages, S3, Netlify, etc.). Background map tiles
+are still fetched live from OpenStreetMap, so viewers need internet access
+for those to load — same as any web map.
