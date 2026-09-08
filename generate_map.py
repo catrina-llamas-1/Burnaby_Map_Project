@@ -181,7 +181,16 @@ def geocode_postal_codes(df):
         import pgeocode
 
     nomi = pgeocode.Nominatim("ca")
-    codes = df[COLUMN_GEOCODE_POSTAL].str.replace(" ", "", regex=False).str.upper()
+    # pgeocode resolves Canadian postal codes at the FSA level (the first 3
+    # characters, e.g. "V5H") and expects that FSA as its own whitespace-
+    # separated token (it splits the input and takes the first token). Derive
+    # the FSA ourselves instead of relying on the input already having a
+    # space in the right place, so "V5H 0A1", "v5h0a1", and "V5H-0A1" all
+    # resolve the same way.
+    alnum_codes = (
+        df[COLUMN_GEOCODE_POSTAL].str.upper().str.replace(r"[^A-Z0-9]", "", regex=True)
+    )
+    codes = alnum_codes.str[:3]
     lookup = nomi.query_postal_code(codes.tolist())
 
     df["latitude"] = lookup["latitude"].values
