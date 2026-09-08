@@ -463,14 +463,29 @@ def package_output(m, output_dir=OUTPUT_DIR, output_zip=OUTPUT_ZIP):
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_text)
 
+    # Most static hosts (Netlify, GitHub Pages, S3, ...) serve index.html by
+    # default at the site root. Without it, visiting the root URL shows the
+    # host's own "not found" page even though map.html is deployed and fine
+    # -- easy to mistake for "the map doesn't show". Ship a duplicate copy
+    # named index.html so the site works whether visitors land on the root
+    # URL or on /map.html directly.
+    if OUTPUT_HTML_NAME != "index.html":
+        shutil.copyfile(html_path, os.path.join(output_dir, "index.html"))
+
     readme_path = os.path.join(output_dir, "README.txt")
     with open(readme_path, "w") as f:
         f.write(
-            "This folder contains an interactive map (map.html) plus its\n"
-            "supporting library files (assets/). Upload BOTH map.html and the\n"
-            "assets/ folder together to any static web host (GitHub Pages, S3\n"
-            "static site, Netlify, etc.), keeping them in the same relative\n"
-            "layout, and open map.html.\n"
+            "This folder contains the interactive map (map.html, duplicated as\n"
+            "index.html) plus its supporting library files (assets/). Upload\n"
+            "map.html, index.html, and the assets/ folder together to any static\n"
+            "web host (GitHub Pages, S3 static site, Netlify, etc.), keeping\n"
+            "them in the same relative layout.\n"
+            "\n"
+            "index.html is what most hosts serve automatically at your site's\n"
+            "root URL (e.g. https://yoursite.netlify.app/) -- if you visit the\n"
+            "root URL and only map.html exists, the host's own \"not found\"\n"
+            "page shows instead of the map. Visiting /map.html directly always\n"
+            "works too.\n"
             "\n"
             "The map itself doesn't need internet access to load (the Leaflet/\n"
             "jQuery/Bootstrap/Font Awesome files are bundled locally), but the\n"
