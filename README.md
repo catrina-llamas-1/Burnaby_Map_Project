@@ -2,7 +2,10 @@
 
 Generates an interactive HTML map of worker postal codes (BC & Alberta),
 filterable by **Region** (ClaimsPro / SCM / Pario) and **Work Address - Line 1**,
-usable together or independently. Output is a zip you can host as a static site.
+usable together or independently. A left-hand sidebar lists every pin by its
+`Worker's Postal` value, stays in sync with the active filters, and clicking
+an entry zooms/pans the map to that pin and opens its popup. Output is a zip
+you can host as a static site.
 
 ## Run in Google Colab
 

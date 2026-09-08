@@ -252,6 +252,7 @@ def build_popup_html(row):
         if pd.notna(part) and str(part).strip()
     )
     return (
+        f"<b>Worker's Postal:</b> {escape(str(row[COLUMN_GEOCODE_POSTAL]))}<br>"
         f"<b>Region:</b> {escape(str(row['region_category']))}<br>"
         f"<b>Address:</b> {escape(address_line)}"
     )
@@ -276,13 +277,21 @@ def build_map(df):
     if (df["address_category"] == UNKNOWN_ADDRESS_LABEL).any():
         address_labels.append(UNKNOWN_ADDRESS_LABEL)
 
-    marker_meta = []  # [{"var": js_var_name, "region": ..., "address": ...}, ...]
+    marker_meta = []  # [{"var": js_var_name, "region": ..., "address": ..., "postal": ..., "lat": ..., "lng": ...}, ...]
 
     for _, row in df.iterrows():
-        marker = folium.Marker(
+        # CircleMarker only needs core Leaflet (no icon plugin), so a pin
+        # always renders even if a secondary CDN (e.g. Leaflet.awesome-markers)
+        # is unreachable.
+        marker = folium.CircleMarker(
             location=[row["latitude"], row["longitude"]],
+            radius=8,
+            color=row["marker_color"],
+            weight=2,
+            fill=True,
+            fill_color=row["marker_color"],
+            fill_opacity=0.85,
             popup=folium.Popup(build_popup_html(row), max_width=320),
-            icon=folium.Icon(color=row["marker_color"], icon="user", prefix="fa"),
         )
         marker.add_to(m)
         marker_meta.append(
@@ -290,6 +299,9 @@ def build_map(df):
                 "var": marker.get_name(),
                 "region": row["region_category"],
                 "address": row["address_category"],
+                "postal": row[COLUMN_GEOCODE_POSTAL],
+                "lat": row["latitude"],
+                "lng": row["longitude"],
             }
         )
 
@@ -297,11 +309,19 @@ def build_map(df):
     return m
 
 
+# Zoom level used when clicking a sidebar entry to jump to its pin.
+SIDEBAR_ZOOM_LEVEL = 14
+
+
 def _add_filter_control(m, marker_meta, region_labels, address_labels):
     """Inject a custom Leaflet control with two checkbox groups (Region, Work
-    Address). A marker is shown only if its region AND its address are both
-    checked, so the two filters combine (AND) or can be used on their own by
-    leaving every box in the other group checked."""
+    Address) plus a left-hand sidebar listing every pin by its Worker's
+    Postal value. A marker is shown only if its region AND its address are
+    both checked, so the two filters combine (AND) or can be used on their
+    own by leaving every box in the other group checked. The sidebar list
+    stays in sync with the filters (hidden pins drop out of the list too),
+    and clicking a list entry zooms/pans the map to that pin and opens its
+    popup."""
     from folium import Element
 
     map_var = m.get_name()
@@ -335,13 +355,30 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
       <button id="address-select-all" style="margin-top:4px;">All</button>
       <button id="address-select-none">None</button>
     </div>
+
+    <div id="postal-map-sidebar" style="
+        position: fixed; top: 10px; left: 10px; z-index: 9999;
+        background: white; border: 2px solid #444; border-radius: 6px;
+        font-family: Arial, sans-serif; font-size: 13px;
+        width: 240px; max-height: 90vh; display: flex; flex-direction: column;
+        box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
+      <div style="font-weight:bold; padding:10px 14px 4px 14px;">
+        Pins (Worker's Postal)
+      </div>
+      <div id="postal-map-pin-count" style="padding:0 14px 6px 14px; color:#555;"></div>
+      <div id="postal-map-pin-list" style="overflow-y:auto; flex:1; min-height:0; padding:0 6px 8px 6px;"></div>
+    </div>
     """
 
     marker_meta_js = ",\n".join(
-        '    {{var: {var}, region: "{region}", address: "{address}"}}'.format(
+        '    {{var: {var}, region: "{region}", address: "{address}", '
+        'postal: "{postal}", lat: {lat}, lng: {lng}}}'.format(
             var=meta["var"],
             region=meta["region"].replace('"', '\\"'),
             address=meta["address"].replace('"', '\\"'),
+            postal=str(meta["postal"]).replace('"', '\\"'),
+            lat=repr(float(meta["lat"])),
+            lng=repr(float(meta["lng"])),
         )
         for meta in marker_meta
     )
@@ -353,6 +390,28 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
 {marker_meta_js}
         ];
 
+        var pinListEl = document.getElementById('postal-map-pin-list');
+        var pinCountEl = document.getElementById('postal-map-pin-count');
+
+        markerInfo.forEach(function(info, idx) {{
+          var row = document.createElement('div');
+          row.className = 'postal-map-pin-row';
+          row.textContent = info.postal;
+          row.style.padding = '4px 8px';
+          row.style.margin = '2px 0';
+          row.style.borderRadius = '4px';
+          row.style.cursor = 'pointer';
+          row.title = 'Region: ' + info.region + ' | ' + info.address;
+          row.addEventListener('mouseenter', function() {{ row.style.background = '#eef3fb'; }});
+          row.addEventListener('mouseleave', function() {{ row.style.background = ''; }});
+          row.addEventListener('click', function() {{
+            {map_var}.setView([info.lat, info.lng], {SIDEBAR_ZOOM_LEVEL});
+            info.var.openPopup();
+          }});
+          pinListEl.appendChild(row);
+          info.rowEl = row;
+        }});
+
         function checkedValues(cls) {{
           var boxes = document.querySelectorAll('.' + cls);
           var vals = [];
@@ -363,15 +422,19 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
         function applyFilter() {{
           var regions = checkedValues('region-filter');
           var addresses = checkedValues('address-filter');
+          var visibleCount = 0;
           markerInfo.forEach(function(info) {{
             var show = regions.indexOf(info.region) !== -1 &&
                        addresses.indexOf(info.address) !== -1;
             if (show) {{
               if (!{map_var}.hasLayer(info.var)) {{ info.var.addTo({map_var}); }}
+              visibleCount++;
             }} else {{
               if ({map_var}.hasLayer(info.var)) {{ {map_var}.removeLayer(info.var); }}
             }}
+            info.rowEl.style.display = show ? '' : 'none';
           }});
+          pinCountEl.textContent = visibleCount + ' of ' + markerInfo.length + ' shown';
         }}
 
         document.querySelectorAll('.region-filter, .address-filter').forEach(function(b) {{
@@ -390,6 +453,8 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
         bindBulk('region-select-none', 'region-filter', false);
         bindBulk('address-select-all', 'address-filter', true);
         bindBulk('address-select-none', 'address-filter', false);
+
+        applyFilter();
       }}
 
       if (document.readyState === 'complete' || document.readyState === 'interactive') {{
