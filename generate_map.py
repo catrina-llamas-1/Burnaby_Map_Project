@@ -335,16 +335,26 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
 
     map_var = m.get_name()
 
-    def checkbox_html(group, values):
+    def color_swatch_html(color):
+        return (
+            f'<span style="display:inline-block; width:11px; height:11px; '
+            f'border-radius:50%; background:{escape(color)}; border:1px solid #333; '
+            f'margin-right:6px; vertical-align:middle;"></span>'
+        )
+
+    def checkbox_html(group, values, color_map=None):
         items = []
         for v in values:
             safe_id = f"{group}_{re.sub(r'[^a-zA-Z0-9]', '_', v)}"
+            swatch = color_swatch_html(color_map[v]) if color_map else ""
             items.append(
                 f'<label style="display:block;font-weight:normal;margin:2px 0;">'
                 f'<input type="checkbox" class="{group}-filter" value="{escape(v)}" '
-                f'id="{safe_id}" checked> {escape(v)}</label>'
+                f'id="{safe_id}" checked> {swatch}{escape(v)}</label>'
             )
         return "\n".join(items)
+
+    region_colors = {label: REGION_COLORS.get(label, UNKNOWN_COLOR) for label in region_labels}
 
     control_html = f"""
     <div id="postal-map-filter-panel" style="
@@ -355,7 +365,7 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
       <div style="font-weight:bold; margin-bottom:6px;">{escape(MAP_TITLE)}</div>
 
       <div style="font-weight:bold; margin-top:6px;">Region</div>
-      {checkbox_html("region", region_labels)}
+      {checkbox_html("region", region_labels, color_map=region_colors)}
       <button id="region-select-all" style="margin-top:4px;">All</button>
       <button id="region-select-none">None</button>
 
@@ -392,21 +402,62 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
         for meta in marker_meta
     )
 
+    region_order_js = ", ".join(f'"{r}"' for r in region_labels)
+    region_colors_js = ", ".join(
+        f'"{r}": "{region_colors[r]}"' for r in region_labels
+    )
+
     filter_js = f"""
     (function() {{
       function init() {{
         var markerInfo = [
 {marker_meta_js}
         ];
+        var regionOrder = [{region_order_js}];
+        var regionColors = {{{region_colors_js}}};
 
         var pinListEl = document.getElementById('postal-map-pin-list');
         var pinCountEl = document.getElementById('postal-map-pin-count');
 
-        markerInfo.forEach(function(info, idx) {{
+        function groupKey(region) {{
+          return 'postal-map-group-' + region.replace(/[^a-zA-Z0-9]/g, '_');
+        }}
+
+        // Group pins by region (in the same order as the Region filter) so
+        // the sidebar mirrors the map's color coding. Each region gets a
+        // color-swatch header followed by its own pins, built as one
+        // contiguous block so later regions don't get interleaved.
+        var groupHeaderEls = {{}};
+        var groupRowsEls = {{}};
+        regionOrder.forEach(function(region) {{
+          var header = document.createElement('div');
+          header.id = groupKey(region);
+          header.style.display = 'flex';
+          header.style.alignItems = 'center';
+          header.style.fontWeight = 'bold';
+          header.style.margin = '8px 4px 2px 4px';
+          var swatch = document.createElement('span');
+          swatch.style.display = 'inline-block';
+          swatch.style.width = '11px';
+          swatch.style.height = '11px';
+          swatch.style.borderRadius = '50%';
+          swatch.style.background = regionColors[region] || '#999';
+          swatch.style.border = '1px solid #333';
+          swatch.style.marginRight = '6px';
+          header.appendChild(swatch);
+          var label = document.createElement('span');
+          label.textContent = region;
+          header.appendChild(label);
+          pinListEl.appendChild(header);
+          groupHeaderEls[region] = header;
+          groupRowsEls[region] = [];
+        }});
+
+        markerInfo.forEach(function(info) {{
           var row = document.createElement('div');
           row.className = 'postal-map-pin-row';
           row.textContent = info.postal;
-          row.style.padding = '4px 8px';
+          row.style.padding = '4px 8px 4px 22px';
           row.style.margin = '2px 0';
           row.style.borderRadius = '4px';
           row.style.cursor = 'pointer';
@@ -417,7 +468,18 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
             {map_var}.setView([info.lat, info.lng], {SIDEBAR_ZOOM_LEVEL});
             info.var.openPopup();
           }});
-          pinListEl.appendChild(row);
+          var rowsForRegion = groupRowsEls[info.region];
+          if (rowsForRegion) {{
+            // Insert right after the last row already placed for this
+            // region (or right after its header, if this is the first).
+            var previous = rowsForRegion.length
+              ? rowsForRegion[rowsForRegion.length - 1]
+              : groupHeaderEls[info.region];
+            previous.parentNode.insertBefore(row, previous.nextSibling);
+            rowsForRegion.push(row);
+          }} else {{
+            pinListEl.appendChild(row);
+          }}
           info.rowEl = row;
         }});
 
@@ -442,6 +504,13 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
               if ({map_var}.hasLayer(info.var)) {{ {map_var}.removeLayer(info.var); }}
             }}
             info.rowEl.style.display = show ? '' : 'none';
+          }});
+          regionOrder.forEach(function(region) {{
+            var anyVisible = (groupRowsEls[region] || []).some(function(row) {{
+              return row.style.display !== 'none';
+            }});
+            var headerEl = groupHeaderEls[region];
+            if (headerEl) {{ headerEl.style.display = anyVisible ? 'flex' : 'none'; }}
           }});
           pinCountEl.textContent = visibleCount + ' of ' + markerInfo.length + ' shown';
         }}
