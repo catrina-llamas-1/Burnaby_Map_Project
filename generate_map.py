@@ -123,7 +123,15 @@ def load_spreadsheet(path):
 
 def geocode_postal_codes(df):
     """Add latitude/longitude/province columns based on COLUMN_GEOCODE_POSTAL."""
-    import pgeocode
+    try:
+        import pgeocode
+    except ModuleNotFoundError:
+        import subprocess
+        import sys
+
+        print("pgeocode not found; installing it now...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pgeocode"])
+        import pgeocode
 
     nomi = pgeocode.Nominatim("ca")
     codes = df[COLUMN_GEOCODE_POSTAL].str.replace(" ", "", regex=False).str.upper()
@@ -394,10 +402,28 @@ def generate_map_from_excel(input_path, output_zip=OUTPUT_ZIP):
     return zip_path
 
 
+def _running_in_colab():
+    try:
+        import google.colab  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _running_in_notebook():
+    try:
+        from IPython import get_ipython
+
+        return get_ipython() is not None
+    except ImportError:
+        return False
+
+
 def _colab_main():
     """Convenience entry point for Google Colab: uploads the spreadsheet,
     runs the pipeline, and downloads the resulting zip."""
-    from google.colab import files  # noqa: F401  (import here so script also runs outside Colab)
+    from google.colab import files
 
     print("Upload your .xlsx spreadsheet...")
     uploaded = files.upload()
@@ -409,15 +435,26 @@ def _colab_main():
     files.download(zip_path)
 
 
-if __name__ == "__main__":
-    try:
+def _main():
+    if _running_in_colab():
         _colab_main()
-    except ImportError:
-        # Not running in Colab: fall back to a local path argument.
-        import sys
+        return
 
-        if len(sys.argv) < 2:
-            raise SystemExit(
-                "Usage: python generate_map.py <path-to-spreadsheet.xlsx>"
-            )
-        generate_map_from_excel(sys.argv[1])
+    if _running_in_notebook():
+        # Plain Jupyter (not Colab): sys.argv holds kernel launch args, not a
+        # file path, so ask directly instead.
+        input_path = input("Path to your .xlsx spreadsheet: ").strip()
+        if not input_path:
+            raise SystemExit("No path provided.")
+        generate_map_from_excel(input_path)
+        return
+
+    import sys
+
+    if len(sys.argv) < 2:
+        raise SystemExit("Usage: python generate_map.py <path-to-spreadsheet.xlsx>")
+    generate_map_from_excel(sys.argv[1])
+
+
+if __name__ == "__main__":
+    _main()
