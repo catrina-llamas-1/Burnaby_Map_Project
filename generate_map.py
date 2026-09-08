@@ -94,8 +94,25 @@ OUTPUT_HTML_NAME = "map.html"
 # Step 1: Load & clean the spreadsheet
 # ---------------------------------------------------------------------------
 
+def _normalize_column_name(name):
+    """Normalize a header for matching: lowercase, unify curly quotes/dashes,
+    collapse whitespace, and strip surrounding punctuation."""
+    text = str(name).strip().lower()
+    text = text.replace("’", "'").replace("‘", "'")
+    text = text.replace("–", "-").replace("—", "-")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
 def load_spreadsheet(path):
-    """Read the input .xlsx into a DataFrame and check required columns exist."""
+    """Read the input .xlsx into a DataFrame and check required columns exist.
+
+    Column matching is normalized (case/whitespace/apostrophe/dash-insensitive)
+    so headers like "worker's postal ", "Worker’s Postal", or "WORKER'S POSTAL"
+    all resolve to the configured COLUMN_GEOCODE_POSTAL, etc. Matched columns
+    are renamed to the exact configured names so the rest of the pipeline can
+    rely on them as-is.
+    """
     df = pd.read_excel(path)
 
     required = [
@@ -105,12 +122,30 @@ def load_spreadsheet(path):
         COLUMN_CITY,
         COLUMN_DISPLAY_POSTAL,
     ]
-    missing = [c for c in required if c not in df.columns]
+
+    actual_by_normalized = {}
+    for col in df.columns:
+        key = _normalize_column_name(col)
+        actual_by_normalized.setdefault(key, col)
+
+    rename_map = {}
+    missing = []
+    for wanted in required:
+        key = _normalize_column_name(wanted)
+        actual = actual_by_normalized.get(key)
+        if actual is None:
+            missing.append(wanted)
+        elif actual != wanted:
+            rename_map[actual] = wanted
+
     if missing:
         raise ValueError(
             f"Spreadsheet is missing required column(s): {missing}. "
             f"Found columns: {list(df.columns)}"
         )
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
 
     df = df.dropna(subset=[COLUMN_GEOCODE_POSTAL]).copy()
     df[COLUMN_GEOCODE_POSTAL] = df[COLUMN_GEOCODE_POSTAL].astype(str).str.strip()
