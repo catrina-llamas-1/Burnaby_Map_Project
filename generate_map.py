@@ -347,7 +347,6 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
     )
 
     filter_js = f"""
-    <script>
     (function() {{
       function init() {{
         var markerInfo = [
@@ -399,7 +398,6 @@ def _add_filter_control(m, marker_meta, region_labels, address_labels):
         document.addEventListener('DOMContentLoaded', init);
       }}
     }})();
-    </script>
     """
 
     m.get_root().html.add_child(Element(control_html))
