@@ -135,7 +135,7 @@ UNKNOWN_REGION_LABEL = "Unclassified"
 UNKNOWN_ADDRESS_LABEL = "Other / Unmatched Address"
 UNKNOWN_COLOR = "gray"
 
-MAP_TITLE = "Postal codes map - North Vancouver"
+MAP_TITLE = "Postal codes map: North Vancouver"
 MAP_START_LOCATION = [53.7267, -119.0]   # rough BC/AB midpoint
 MAP_START_ZOOM = 5
 
@@ -855,7 +855,7 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
     )
 
     kpi_rows_html = "".join(
-        f'<div class="postal-map-kpi-row"><span>Share under {t} min</span>'
+        f'<div class="postal-map-kpi-row"><span>Under {t} min</span>'
         f'<span id="postal-map-kpi-pct-{t}">—</span></div>'
         for t in DRIVE_TIME_THRESHOLDS_MINUTES
     )
@@ -876,9 +876,15 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         font-family: {FONT_FAMILY}; font-size: 13px;">
 
       <div id="postal-map-filter-panel" style="
-          background: white; padding: 10px 14px; border: 2px solid #444;
+          background: white; border: 2px solid #444;
           border-radius: 6px; flex: 0 0 auto;
           max-height: 46vh; overflow-y: auto; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
+        <div style="background:{SIDEBAR_HEADER_BG_COLOR}; color:{SIDEBAR_HEADER_TEXT_COLOR};
+            font-weight:bold; font-size:18px; padding:10px 14px; margin:-1px -1px 10px -1px;
+            border-radius:4px 4px 0 0;">
+          {escape(MAP_TITLE)}
+        </div>
+        <div style="padding:0 14px 10px 14px;">
         <div style="font-weight:bold; margin-top:0;">Departure Time</div>
         {direction_radios_html}
         <div style="color:#777; font-size:11px; margin-top:2px;">
@@ -897,16 +903,13 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         {checkbox_html("address", address_labels, color_map=address_colors)}
         <button id="address-select-all" style="margin-top:4px;">All</button>
         <button id="address-select-none">None</button>
+        </div>
       </div>
 
       <div id="postal-map-sidebar" style="
           background: white; border: 2px solid #444; border-radius: 6px;
           flex: 1 1 auto; min-height: 120px; display: flex; flex-direction: column;
           overflow: hidden; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
-        <div style="background:{SIDEBAR_HEADER_BG_COLOR}; color:{SIDEBAR_HEADER_TEXT_COLOR};
-            font-weight:bold; padding:10px 14px; border-radius:4px 4px 0 0;">
-          {escape(MAP_TITLE)}
-        </div>
         <div style="font-weight:bold; padding:10px 14px 4px 14px;">
           Pins (Worker's Postal)
         </div>
@@ -1007,7 +1010,12 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         // failed to load (e.g. its CDN was unreachable), clusterGroup stays
         // null and the map just behaves as "individual pins" always, rather
         // than throwing.
-        var clusterGroup = (typeof L.markerClusterGroup === 'function') ? L.markerClusterGroup() : null;
+        // singleMarkerMode keeps the numbered cluster-circle look even for a
+        // "cluster" of one pin, so every group in Clustered view shows a
+        // count (down to 1) instead of a lone pin rendering unlabeled.
+        var clusterGroup = (typeof L.markerClusterGroup === 'function')
+          ? L.markerClusterGroup({{ singleMarkerMode: true }})
+          : null;
         if (!clusterGroup) {{
           document.querySelectorAll('.pin-display-toggle').forEach(function(radio) {{
             if (radio.value === 'cluster') {{ radio.disabled = true; }}
