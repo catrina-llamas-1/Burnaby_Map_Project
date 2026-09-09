@@ -1,12 +1,38 @@
-# Worker Postal Code Map
+# Postal Codes Map - North Vancouver
 
 Generates an interactive HTML map of worker postal codes (BC & Alberta),
-filterable by **Region** (ClaimsPro / SCM / Pario) and **Work Address - Line 1**,
-usable together or independently. The Region filter shows a color legend
-next to each checkbox. Output is a zip you can host as a static site.
+filterable by **Region** (ClaimsPro / SCM / Pario) and **Work Address**,
+usable together or independently. Both filters show a color legend next to
+each checkbox (Region colors on the pins/lines, Work Address colors on the
+destination markers). Output is a zip you can host as a static site.
 
 Pins are placed using the `Lat`/`Long` coordinates already present in the
 spreadsheet — no geocoding needed to plot them.
+
+## Layout
+
+All controls are stacked on the left side of the map, top to bottom:
+
+1. **Filter panel** (topmost) — Departure Time toggle, Pin Display toggle
+   (individual pins vs. clustered), Region checkboxes, Work Address
+   checkboxes.
+2. **Sidebar** — a `#3A4458` header bar showing the map title ("Postal
+   codes map - North Vancouver"), then the worker list grouped by Region,
+   each with its own include/exclude checkbox.
+3. **KPI panel** (bottom) — live drive-time statistics.
+
+Typeface is Open Sans throughout (falls back to a normal sans-serif stack
+if Google Fonts is unreachable — a missing web font degrades gracefully,
+unlike a missing script).
+
+## Pin display: individual or clustered
+
+A **Pin Display** toggle in the filter panel switches between every
+worker shown as its own pin ("Individual pins", the default) and grouped
+into clusters via Leaflet.markercluster ("Clustered") that expand as you
+zoom in. If that plugin fails to load in the viewer's browser, the
+"Clustered" option is automatically disabled and the map keeps working
+with individual pins — it never breaks the rest of the map.
 
 ## Drive times, straight-line distance & KPIs
 
@@ -14,10 +40,10 @@ Each worker's drive time and distance to their classified Work Address is
 computed with the **Google Maps Distance Matrix API**, for **both**
 directions/times at once:
 
-- **7:30 AM** — Worker's Postal → Work Address (the morning commute).
-- **4:30 PM** — Work Address → Worker's Postal (the afternoon commute,
-  reverse direction; drive time/distance can differ from the AM leg due to
-  one-way streets, ramps, and time-of-day traffic).
+- **7:30 AM** — Home → Work (the morning commute).
+- **4:30 PM** — Work → Home (the afternoon commute, reverse direction;
+  drive time/distance can differ from the AM leg due to one-way streets,
+  ramps, and time-of-day traffic).
 
 Both are modeled for next Monday, in each worker's own province timezone,
 so results reflect typical weekday traffic rather than a specific date.
@@ -38,9 +64,9 @@ content is fixed at generation time.
   list. Clicking a worker's postal code zooms/pans to it.
 - **KPI panel** — recomputes live, for whichever direction is toggled, from
   whichever workers are currently included (Region + Work Address filters,
-  and individual checkboxes): base size, average drive time, median drive
-  time, % of workers under 15 / 20 / 30 minutes, average distance (km), and
-  the closest/farthest worker by drive time.
+  and individual checkboxes): base size (shown as "N employees"), average
+  drive time, median drive time, % of workers under 15 / 20 / 30 minutes,
+  average distance (km), and the closest/farthest worker by drive time.
 
 ## Google Maps API key (required for drive times)
 
@@ -91,7 +117,8 @@ python generate_map.py path/to/spreadsheet.xlsx
   picking the right timezone for drive-time calculations)
 - `Lat`, `Long` — coordinates used to place the pin directly
 - `Region` — free text; scanned for keywords (`ClaimsPro`, `SCM`, `Pario`)
-- `Work Address - Line 1`
+- `Work Address - Line 1` — still the actual spreadsheet column name; the
+  map's own UI just labels this filter "Work Address" (`ADDRESS_FILTER_LABEL`)
 - `City`
 - `Postal or ZIP code` — display-only, shown in the popup
 

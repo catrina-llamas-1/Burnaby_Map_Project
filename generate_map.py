@@ -107,21 +107,54 @@ REGION_COLORS = {
 # Work Address - Line 1 categories to filter on. Matching is case-insensitive
 # and ignores extra whitespace, but otherwise looks for these as substrings
 # of the spreadsheet's address value (so "Suite 112, 6093 Iona Drive, Burnaby"
-# still matches "Suite 112, 6093 Iona Drive").
+# still matches "Suite 112, 6093 Iona Drive"). This is also the column name
+# matched in the spreadsheet -- COLUMN_ADDRESS_LINE1 above -- but the map's
+# own UI labels this filter with ADDRESS_FILTER_LABEL below instead.
 ADDRESS_CATEGORIES = [
     "8333 Eastlake Drive Suite 202",
     "1849 Welch Street",
     "Suite 112, 6093 Iona Drive",
 ]
 
+# Label shown in the map's UI (filter panel heading) for the Work Address
+# filter. Purely cosmetic -- COLUMN_ADDRESS_LINE1 (the spreadsheet column
+# name being matched) is unaffected.
+ADDRESS_FILTER_LABEL = "Work Address"
+
+# Marker/line/legend color per work address, and reflected on the map for
+# the destination pins themselves.
+ADDRESS_COLORS = {
+    "8333 Eastlake Drive Suite 202": "#EF6528",
+    "1849 Welch Street": "#4DB595",
+    "Suite 112, 6093 Iona Drive": "#7D7370",
+}
+UNKNOWN_ADDRESS_COLOR = "#555555"
+
 # Label used for rows that don't match any known Region keyword / Address category.
 UNKNOWN_REGION_LABEL = "Unclassified"
 UNKNOWN_ADDRESS_LABEL = "Other / Unmatched Address"
 UNKNOWN_COLOR = "gray"
 
-MAP_TITLE = "Worker Postal Code Map"
+MAP_TITLE = "Postal codes map - North Vancouver"
 MAP_START_LOCATION = [53.7267, -119.0]   # rough BC/AB midpoint
 MAP_START_ZOOM = 5
+
+# Background color for the sidebar's title header block.
+SIDEBAR_HEADER_BG_COLOR = "#3A4458"
+SIDEBAR_HEADER_TEXT_COLOR = "#ffffff"
+
+# Typeface used for all text on the map (filter/sidebar/KPI panels, popups).
+# Loaded from Google Fonts; falls back to a normal sans-serif stack if that
+# CDN is unreachable when the map is viewed (a missing web font degrades
+# gracefully, unlike a missing script, so this isn't vendored locally like
+# the JS/CSS libraries are).
+FONT_FAMILY = "'Open Sans', Arial, sans-serif"
+GOOGLE_FONT_CSS_URL = "https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap"
+
+# Default pin display mode when the map first loads: "individual" (every
+# worker pin shown separately, as before) or "cluster" (grouped via
+# Leaflet.markercluster). The viewer can switch with an in-page toggle.
+DEFAULT_PIN_DISPLAY_MODE = "individual"
 
 # ---------------------------------------------------------------------------
 # Drive-time CONFIG (Google Maps Platform: Geocoding API + Distance Matrix
@@ -183,6 +216,22 @@ DRIVE_TIME_THRESHOLDS_MINUTES = [15, 20, 30]
 # markers plugin -- see build_map).
 DISTANCE_LINE_WEIGHT = 1.5
 DISTANCE_LINE_OPACITY = 0.55
+
+# Leaflet.markercluster powers the "Clustered" pin display mode (there is
+# no clustering in core Leaflet). If this plugin fails to load in the
+# viewer's browser, the map falls back to individual pins automatically
+# (see the defensive check in the injected JS) rather than breaking.
+LEAFLET_MARKERCLUSTER_VERSION = "1.5.3"
+LEAFLET_MARKERCLUSTER_JS_URL = (
+    f"https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/"
+    f"{LEAFLET_MARKERCLUSTER_VERSION}/leaflet.markercluster.js"
+)
+LEAFLET_MARKERCLUSTER_CSS_URLS = [
+    f"https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/"
+    f"{LEAFLET_MARKERCLUSTER_VERSION}/MarkerCluster.css",
+    f"https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/"
+    f"{LEAFLET_MARKERCLUSTER_VERSION}/MarkerCluster.Default.css",
+]
 
 OUTPUT_DIR = "postal_code_map_output"
 OUTPUT_ZIP = "postal_code_map_output.zip"
@@ -604,8 +653,8 @@ def build_popup_html(row):
         f"<b>Worker's Postal:</b> {escape(str(row[COLUMN_GEOCODE_POSTAL]))}<br>"
         f"<b>Region:</b> {escape(str(row['region_category']))}<br>"
         f"<b>Address:</b> {escape(address_line)}<br>"
-        f"<b>{escape(am_label)} (Worker → Address):</b> {escape(drive_line('AM'))}<br>"
-        f"<b>{escape(pm_label)} (Address → Worker):</b> {escape(drive_line('PM'))}"
+        f"<b>{escape(am_label)} (Home → Work):</b> {escape(drive_line('AM'))}<br>"
+        f"<b>{escape(pm_label)} (Work → Home):</b> {escape(drive_line('PM'))}"
     )
 
 
@@ -620,6 +669,16 @@ def build_map(df):
     m = folium.Map(location=MAP_START_LOCATION, zoom_start=MAP_START_ZOOM, tiles="OpenStreetMap")
     m.get_root().html.add_child(Element(f"<title>{escape(MAP_TITLE)}</title>"))
 
+    head_extras = [f'<link rel="stylesheet" href="{GOOGLE_FONT_CSS_URL}"/>']
+    head_extras += [f'<link rel="stylesheet" href="{url}"/>' for url in LEAFLET_MARKERCLUSTER_CSS_URLS]
+    head_extras.append(f'<script src="{LEAFLET_MARKERCLUSTER_JS_URL}"></script>')
+    head_extras.append(
+        f"<style>body, .leaflet-container, .leaflet-popup-content {{"
+        f"font-family: {FONT_FAMILY} !important; }}</style>"
+    )
+    for tag in head_extras:
+        m.get_root().header.add_child(Element(tag))
+
     region_labels = list(REGION_KEYWORDS.keys())
     if (df["region_category"] == UNKNOWN_REGION_LABEL).any():
         region_labels.append(UNKNOWN_REGION_LABEL)
@@ -631,16 +690,25 @@ def build_map(df):
     # One destination marker per work address that actually has coordinates
     # (i.e. was successfully geocoded), keyed by address category so the
     # filter JS can toggle it alongside that address's worker pins/lines.
+    # Colored per ADDRESS_COLORS and drawn as a CircleMarker (bigger/bordered
+    # to stand out from worker pins) rather than folium's default Marker
+    # icon, since a custom color there would require the Leaflet.awesome-
+    # markers plugin -- the same secondary-CDN dependency that has already
+    # caused pins to silently disappear once in this project.
     dest_markers = {}
     has_dest = df["dest_lat"].notna() & df["dest_lng"].notna()
     for category, group in df[has_dest].groupby("address_category"):
         dest_lat = float(group["dest_lat"].iloc[0])
         dest_lng = float(group["dest_lng"].iloc[0])
-        # Plain default Leaflet marker (no icon= given): uses Leaflet's own
-        # bundled marker image, not the Leaflet.awesome-markers plugin, so
-        # it renders even if that secondary CDN is unreachable.
-        dest_marker = folium.Marker(
+        color = ADDRESS_COLORS.get(category, UNKNOWN_ADDRESS_COLOR)
+        dest_marker = folium.CircleMarker(
             location=[dest_lat, dest_lng],
+            radius=11,
+            color="#ffffff",
+            weight=2,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.95,
             popup=folium.Popup(f"<b>Work Address:</b> {escape(category)}", max_width=320),
         )
         dest_marker.add_to(m)
@@ -759,12 +827,13 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         return "\n".join(items)
 
     region_colors = {label: REGION_COLORS.get(label, UNKNOWN_COLOR) for label in region_labels}
+    address_colors = {label: ADDRESS_COLORS.get(label, UNKNOWN_ADDRESS_COLOR) for label in address_labels}
 
     weekday_name = _WEEKDAY_NAMES[DRIVE_TIME_TARGET_WEEKDAY % 7]
 
     def direction_radio_html(direction, info):
         checked = "checked" if direction == DEFAULT_DIRECTION else ""
-        arrow = "Worker → Address" if direction == "AM" else "Address → Worker"
+        arrow = "Home → Work" if direction == "AM" else "Work → Home"
         return (
             f'<label style="display:block;font-weight:normal;margin:2px 0;">'
             f'<input type="radio" name="postal-map-direction" class="direction-toggle" '
@@ -781,69 +850,84 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         for t in DRIVE_TIME_THRESHOLDS_MINUTES
     )
 
+    pin_display_radios_html = "\n".join(
+        f'<label style="display:block;font-weight:normal;margin:2px 0;">'
+        f'<input type="radio" name="postal-map-pin-display" class="pin-display-toggle" '
+        f'value="{value}" {"checked" if value == DEFAULT_PIN_DISPLAY_MODE else ""}> {label}</label>'
+        for value, label in [("individual", "Individual pins"), ("cluster", "Clustered")]
+    )
+
     control_html = f"""
-    <div id="postal-map-filter-panel" style="
-        position: fixed; top: 10px; right: 10px; z-index: 9999;
-        background: white; padding: 10px 14px; border: 2px solid #444;
-        border-radius: 6px; font-family: Arial, sans-serif; font-size: 13px;
-        max-height: 90vh; overflow-y: auto; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
-      <div style="font-weight:bold; margin-bottom:6px;">{escape(MAP_TITLE)}</div>
-
-      <div style="font-weight:bold; margin-top:6px;">Departure Time</div>
-      {direction_radios_html}
-      <div style="color:#777; font-size:11px; margin-top:2px;">
-        Modeled for next {escape(weekday_name)}, each worker's local province time.
-      </div>
-
-      <div style="font-weight:bold; margin-top:10px;">Region</div>
-      {checkbox_html("region", region_labels, color_map=region_colors)}
-      <button id="region-select-all" style="margin-top:4px;">All</button>
-      <button id="region-select-none">None</button>
-
-      <div style="font-weight:bold; margin-top:10px;">Work Address - Line 1</div>
-      {checkbox_html("address", address_labels)}
-      <button id="address-select-all" style="margin-top:4px;">All</button>
-      <button id="address-select-none">None</button>
-    </div>
-
-    <div id="postal-map-sidebar" style="
+    <style>#postal-map-stack button {{ font-family: {FONT_FAMILY}; }}</style>
+    <div id="postal-map-stack" style="
         position: fixed; top: 10px; left: 10px; z-index: 9999;
-        background: white; border: 2px solid #444; border-radius: 6px;
-        font-family: Arial, sans-serif; font-size: 13px;
-        width: 260px; max-height: 60vh; display: flex; flex-direction: column;
-        box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
-      <div style="font-weight:bold; padding:10px 14px 4px 14px;">
-        Pins (Worker's Postal)
-      </div>
-      <div id="postal-map-pin-count" style="padding:0 14px 4px 14px; color:#555;"></div>
-      <div style="padding:0 14px 6px 14px;">
-        <button id="worker-select-all">All</button>
-        <button id="worker-select-none">None</button>
-      </div>
-      <div id="postal-map-pin-list" style="overflow-y:auto; flex:1; min-height:0; padding:0 6px 8px 6px;"></div>
-    </div>
+        display: flex; flex-direction: column; gap: 10px;
+        width: 270px; max-height: 96vh;
+        font-family: {FONT_FAMILY}; font-size: 13px;">
 
-    <div id="postal-map-kpi-panel" style="
-        position: fixed; left: 10px; bottom: 10px; z-index: 9999;
-        background: white; border: 2px solid #444; border-radius: 6px;
-        font-family: Arial, sans-serif; font-size: 13px;
-        width: 260px; max-height: 36vh; overflow-y: auto;
-        box-shadow: 2px 2px 6px rgba(0,0,0,0.3); padding: 10px 14px;">
-      <div style="font-weight:bold; margin-bottom:4px;">Drive Time KPIs</div>
-      <div id="postal-map-kpi-direction-note" style="color:#555; font-size:11px; margin-bottom:8px;"></div>
-      <style>
-        #postal-map-kpi-panel .postal-map-kpi-row {{
-          display:flex; justify-content:space-between; gap:8px; margin:2px 0;
-        }}
-        #postal-map-kpi-panel .postal-map-kpi-row span:last-child {{ font-weight:bold; }}
-      </style>
-      <div class="postal-map-kpi-row"><span>Base size</span><span id="postal-map-kpi-base">—</span></div>
-      <div class="postal-map-kpi-row"><span>Average time</span><span id="postal-map-kpi-avg-time">—</span></div>
-      <div class="postal-map-kpi-row"><span>Median time</span><span id="postal-map-kpi-median-time">—</span></div>
-      {kpi_rows_html}
-      <div class="postal-map-kpi-row"><span>Average distance</span><span id="postal-map-kpi-avg-dist">—</span></div>
-      <div class="postal-map-kpi-row"><span>Closest</span><span id="postal-map-kpi-closest">—</span></div>
-      <div class="postal-map-kpi-row"><span>Farthest</span><span id="postal-map-kpi-farthest">—</span></div>
+      <div id="postal-map-filter-panel" style="
+          background: white; padding: 10px 14px; border: 2px solid #444;
+          border-radius: 6px; flex: 0 0 auto;
+          max-height: 46vh; overflow-y: auto; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
+        <div style="font-weight:bold; margin-top:0;">Departure Time</div>
+        {direction_radios_html}
+        <div style="color:#777; font-size:11px; margin-top:2px;">
+          Modeled for next {escape(weekday_name)}, each worker's local province time.
+        </div>
+
+        <div style="font-weight:bold; margin-top:10px;">Pin Display</div>
+        {pin_display_radios_html}
+
+        <div style="font-weight:bold; margin-top:10px;">Region</div>
+        {checkbox_html("region", region_labels, color_map=region_colors)}
+        <button id="region-select-all" style="margin-top:4px;">All</button>
+        <button id="region-select-none">None</button>
+
+        <div style="font-weight:bold; margin-top:10px;">{escape(ADDRESS_FILTER_LABEL)}</div>
+        {checkbox_html("address", address_labels, color_map=address_colors)}
+        <button id="address-select-all" style="margin-top:4px;">All</button>
+        <button id="address-select-none">None</button>
+      </div>
+
+      <div id="postal-map-sidebar" style="
+          background: white; border: 2px solid #444; border-radius: 6px;
+          flex: 1 1 auto; min-height: 120px; display: flex; flex-direction: column;
+          overflow: hidden; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
+        <div style="background:{SIDEBAR_HEADER_BG_COLOR}; color:{SIDEBAR_HEADER_TEXT_COLOR};
+            font-weight:bold; padding:10px 14px; border-radius:4px 4px 0 0;">
+          {escape(MAP_TITLE)}
+        </div>
+        <div style="font-weight:bold; padding:10px 14px 4px 14px;">
+          Pins (Worker's Postal)
+        </div>
+        <div id="postal-map-pin-count" style="padding:0 14px 4px 14px; color:#555;"></div>
+        <div style="padding:0 14px 6px 14px;">
+          <button id="worker-select-all">All</button>
+          <button id="worker-select-none">None</button>
+        </div>
+        <div id="postal-map-pin-list" style="overflow-y:auto; flex:1; min-height:0; padding:0 6px 8px 6px;"></div>
+      </div>
+
+      <div id="postal-map-kpi-panel" style="
+          background: white; border: 2px solid #444; border-radius: 6px;
+          flex: 0 0 auto; max-height: 34vh; overflow-y: auto;
+          box-shadow: 2px 2px 6px rgba(0,0,0,0.3); padding: 10px 14px;">
+        <div style="font-weight:bold; margin-bottom:4px;">Drive Time KPIs</div>
+        <div id="postal-map-kpi-direction-note" style="color:#555; font-size:11px; margin-bottom:8px;"></div>
+        <style>
+          #postal-map-kpi-panel .postal-map-kpi-row {{
+            display:flex; justify-content:space-between; gap:8px; margin:2px 0;
+          }}
+          #postal-map-kpi-panel .postal-map-kpi-row span:last-child {{ font-weight:bold; }}
+        </style>
+        <div class="postal-map-kpi-row"><span>Base size</span><span id="postal-map-kpi-base">—</span></div>
+        <div class="postal-map-kpi-row"><span>Average time</span><span id="postal-map-kpi-avg-time">—</span></div>
+        <div class="postal-map-kpi-row"><span>Median time</span><span id="postal-map-kpi-median-time">—</span></div>
+        {kpi_rows_html}
+        <div class="postal-map-kpi-row"><span>Average distance</span><span id="postal-map-kpi-avg-dist">—</span></div>
+        <div class="postal-map-kpi-row"><span>Closest</span><span id="postal-map-kpi-closest">—</span></div>
+        <div class="postal-map-kpi-row"><span>Farthest</span><span id="postal-map-kpi-farthest">—</span></div>
+      </div>
     </div>
     """
 
@@ -908,8 +992,23 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         var kpiThresholds = [{thresholds_js}];
         var directionLabels = {{{direction_labels_js}}};
         var currentDirection = {default_direction_js};
+        var pinDisplayMode = {json.dumps(DEFAULT_PIN_DISPLAY_MODE)};
+        // Leaflet.markercluster has no core-Leaflet fallback; if that plugin
+        // failed to load (e.g. its CDN was unreachable), clusterGroup stays
+        // null and the map just behaves as "individual pins" always, rather
+        // than throwing.
+        var clusterGroup = (typeof L.markerClusterGroup === 'function') ? L.markerClusterGroup() : null;
+        if (!clusterGroup) {{
+          document.querySelectorAll('.pin-display-toggle').forEach(function(radio) {{
+            if (radio.value === 'cluster') {{ radio.disabled = true; }}
+          }});
+        }}
 
-        markerInfo.forEach(function(info) {{ info.workerChecked = true; }});
+        markerInfo.forEach(function(info) {{
+          info.workerChecked = true;
+          info.addedDirect = false;
+          info.addedToCluster = false;
+        }});
 
         function driveMinutesFor(info) {{
           return currentDirection === 'AM' ? info.driveMinutesAM : info.driveMinutesPM;
@@ -1026,7 +1125,7 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         function updateKpiPanel(included) {{
           var byId = function(id) {{ return document.getElementById(id); }};
           var base = included.length;
-          byId('postal-map-kpi-base').textContent = base;
+          byId('postal-map-kpi-base').textContent = base + ' ' + (base === 1 ? 'employee' : 'employees');
 
           if (base === 0) {{
             byId('postal-map-kpi-avg-time').textContent = '—';
@@ -1076,7 +1175,16 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
 
           if (directionNoteEl) {{
             directionNoteEl.textContent = 'Showing ' + directionLabels[currentDirection] +
-              ' (' + (currentDirection === 'AM' ? 'Worker → Address' : 'Address → Worker') + ').';
+              ' (' + (currentDirection === 'AM' ? 'Home → Work' : 'Work → Home') + ').';
+          }}
+
+          var useCluster = pinDisplayMode === 'cluster' && clusterGroup;
+          if (clusterGroup) {{
+            if (useCluster) {{
+              if (!{map_var}.hasLayer(clusterGroup)) {{ clusterGroup.addTo({map_var}); }}
+            }} else {{
+              if ({map_var}.hasLayer(clusterGroup)) {{ {map_var}.removeLayer(clusterGroup); }}
+            }}
           }}
 
           markerInfo.forEach(function(info) {{
@@ -1084,12 +1192,21 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
                                addresses.indexOf(info.address) !== -1;
             var onMap = filterMatch && info.workerChecked;
 
+            if (onMap && useCluster) {{
+              if (info.addedDirect) {{ {map_var}.removeLayer(info.var); info.addedDirect = false; }}
+              if (!info.addedToCluster) {{ clusterGroup.addLayer(info.var); info.addedToCluster = true; }}
+            }} else if (onMap) {{
+              if (info.addedToCluster) {{ clusterGroup.removeLayer(info.var); info.addedToCluster = false; }}
+              if (!info.addedDirect) {{ info.var.addTo({map_var}); info.addedDirect = true; }}
+            }} else {{
+              if (info.addedDirect) {{ {map_var}.removeLayer(info.var); info.addedDirect = false; }}
+              if (info.addedToCluster) {{ clusterGroup.removeLayer(info.var); info.addedToCluster = false; }}
+            }}
+
             if (onMap) {{
-              if (!{map_var}.hasLayer(info.var)) {{ info.var.addTo({map_var}); }}
               if (info.lineVar && !{map_var}.hasLayer(info.lineVar)) {{ info.lineVar.addTo({map_var}); }}
               visibleCount++;
             }} else {{
-              if ({map_var}.hasLayer(info.var)) {{ {map_var}.removeLayer(info.var); }}
               if (info.lineVar && {map_var}.hasLayer(info.lineVar)) {{ {map_var}.removeLayer(info.lineVar); }}
             }}
             info.rowEl.style.display = filterMatch ? '' : 'none';
@@ -1128,6 +1245,15 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
           radio.addEventListener('change', function() {{
             if (radio.checked) {{
               currentDirection = radio.value;
+              recomputeAll();
+            }}
+          }});
+        }});
+
+        document.querySelectorAll('.pin-display-toggle').forEach(function(radio) {{
+          radio.addEventListener('change', function() {{
+            if (radio.checked) {{
+              pinDisplayMode = radio.value;
               recomputeAll();
             }}
           }});
