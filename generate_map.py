@@ -669,15 +669,25 @@ def build_map(df):
     m = folium.Map(location=MAP_START_LOCATION, zoom_start=MAP_START_ZOOM, tiles="OpenStreetMap")
     m.get_root().html.add_child(Element(f"<title>{escape(MAP_TITLE)}</title>"))
 
+    # CSS is order-independent (safe in <head>, which is where folium's own
+    # `.header` children land -- before folium's own default CDN includes).
     head_extras = [f'<link rel="stylesheet" href="{GOOGLE_FONT_CSS_URL}"/>']
     head_extras += [f'<link rel="stylesheet" href="{url}"/>' for url in LEAFLET_MARKERCLUSTER_CSS_URLS]
-    head_extras.append(f'<script src="{LEAFLET_MARKERCLUSTER_JS_URL}"></script>')
     head_extras.append(
         f"<style>body, .leaflet-container, .leaflet-popup-content {{"
         f"font-family: {FONT_FAMILY} !important; }}</style>"
     )
     for tag in head_extras:
         m.get_root().header.add_child(Element(tag))
+
+    # Leaflet.markercluster extends L.FeatureGroup at load time, so it needs
+    # core Leaflet (L) to already exist. `.header` children render BEFORE
+    # folium's own default CDN includes (leaflet.js among them), so adding
+    # this script there would run it before L is defined and it would
+    # silently fail to define L.markerClusterGroup. `.html` children render
+    # in <body>, which always comes after <head> has finished executing, so
+    # Leaflet is guaranteed to be loaded first.
+    m.get_root().html.add_child(Element(f'<script src="{LEAFLET_MARKERCLUSTER_JS_URL}"></script>'))
 
     region_labels = list(REGION_KEYWORDS.keys())
     if (df["region_category"] == UNKNOWN_REGION_LABEL).any():
