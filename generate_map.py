@@ -8,15 +8,16 @@ Leaflet/Folium map, with two independent-but-combinable checkbox filters:
   1) Region     -> classified from a keyword column into ClaimsPro / SCM / Pario
   2) Work Address - Line 1 -> one of three known office addresses
 
-ClaimsPro and SCM share one color (blue). Pario gets its own color (purple).
-Both filters can be used together (AND logic) or on their own.
+ClaimsPro and SCM share one color. Pario gets its own color. Both filters
+can be used together (AND logic) or on their own.
 
 Designed to run top-to-bottom as a single Google Colab cell (or as a normal
 Python script). Everything you're likely to want to tweak lives in the
 CONFIG block below.
 
 Input:  an .xlsx spreadsheet with (at least) these columns:
-          - Worker's Postal              (postal code used to place the pin)
+          - Worker's Postal              (postal code, shown in the popup)
+          - Lat, Long                    (coordinates used to place the pin)
           - Region                       (free text scanned for keywords)
           - Work Address - Line 1
           - City
@@ -27,12 +28,9 @@ Output: a .zip file containing map.html (and a small README), ready to
 """
 
 import hashlib
-import json
 import os
 import re
 import shutil
-import time
-import urllib.parse
 import urllib.request
 import zipfile
 import warnings
@@ -45,33 +43,27 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 # Column names as they appear in the spreadsheet.
-COLUMN_GEOCODE_POSTAL = "Worker's Postal"          # used to place the pin on the map
+COLUMN_GEOCODE_POSTAL = "Worker's Postal"          # shown in the popup / sidebar
+COLUMN_LAT = "Lat"                                 # pin latitude, taken as-is from the spreadsheet
+COLUMN_LONG = "Long"                               # pin longitude, taken as-is from the spreadsheet
 COLUMN_REGION = "Region"                           # free-text, scanned for keywords below
 COLUMN_ADDRESS_LINE1 = "Work Address - Line 1"     # matched against ADDRESS_CATEGORIES
 COLUMN_CITY = "City"
-COLUMN_DISPLAY_POSTAL = "Postal or ZIP code"        # shown in the popup, not used for geocoding
+COLUMN_DISPLAY_POSTAL = "Postal or ZIP code"        # shown in the popup
 
-# Postal codes are geocoded with the Google Maps Geocoding API (full postal
-# code precision, not just the first-3-character FSA). Requires an API key
-# with the "Geocoding API" enabled and billing set up on your Google Cloud
-# project -- each unique postal code is one billed request (results are
-# cached per run, so duplicate postal codes across rows only cost once).
-#
-# Supply the key one of three ways (checked in this order), so you never
-# have to commit a real key into this file:
-#   1. Paste it here, e.g. GOOGLE_MAPS_API_KEY = "AIza..."
-#   2. Set the GOOGLE_MAPS_API_KEY environment variable before running.
-#   3. Leave both blank and run interactively (Colab/Jupyter) -- you'll be
-#      prompted for it with a masked input.
-GOOGLE_MAPS_API_KEY = ""
-
-# Small delay between Geocoding API requests to stay comfortably under
-# Google's rate limits. Increase if you see OVER_QUERY_LIMIT errors.
-GOOGLE_GEOCODE_REQUEST_DELAY_SECONDS = 0.05
-
-# Only keep rows whose postal code resolves to one of these provinces.
-# Set to None to disable the province filter entirely.
+# Only keep rows whose postal code's first letter maps to one of these
+# provinces (standard Canadian postal-code prefix: T -> Alberta, V ->
+# British Columbia). Set to None to disable the province filter entirely.
 ALLOWED_PROVINCES = {"BC", "AB"}
+
+# First letter of a Canadian postal code -> province/territory abbreviation.
+PROVINCE_BY_POSTAL_PREFIX = {
+    "A": "NL", "B": "NS", "C": "PE", "E": "NB",
+    "G": "QC", "H": "QC", "J": "QC",
+    "K": "ON", "L": "ON", "M": "ON", "N": "ON", "P": "ON",
+    "R": "MB", "S": "SK", "T": "AB", "V": "BC",
+    "X": "NT/NU", "Y": "YT",
+}
 
 # Region classification: value -> list of keywords to search for (case-insensitive,
 # substring match) inside COLUMN_REGION. First match wins; order matters if a
@@ -82,11 +74,11 @@ REGION_KEYWORDS = {
     "Pario": ["pario"],
 }
 
-# Marker color per region. ClaimsPro & SCM intentionally share "blue".
+# Marker color per region. ClaimsPro & SCM intentionally share "Blue".
 REGION_COLORS = {
-    "ClaimsPro": "blue",
-    "SCM": "blue",
-    "Pario": "purple",
+    "ClaimsPro": "#7e9cd1",  # Blue
+    "SCM": "#7e9cd1",        # Blue
+    "Pario": "#55489d",      # Purple
 }
 
 # Work Address - Line 1 categories to filter on. Matching is case-insensitive
@@ -150,6 +142,8 @@ def load_spreadsheet(path):
 
     required = [
         COLUMN_GEOCODE_POSTAL,
+        COLUMN_LAT,
+        COLUMN_LONG,
         COLUMN_REGION,
         COLUMN_ADDRESS_LINE1,
         COLUMN_CITY,
@@ -186,107 +180,30 @@ def load_spreadsheet(path):
 
 
 # ---------------------------------------------------------------------------
-# Step 2: Geocode postal codes (Google Maps Geocoding API)
+# Step 2: Read pin coordinates directly from the spreadsheet
 # ---------------------------------------------------------------------------
 
-GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-
-# Statuses the Geocoding API can return for a single, specific postal code
-# that simply has no match -- safe to drop that one row and keep going.
-_GOOGLE_GEOCODE_NO_MATCH_STATUSES = {"ZERO_RESULTS"}
-
-
-def _get_google_maps_api_key():
-    if GOOGLE_MAPS_API_KEY:
-        return GOOGLE_MAPS_API_KEY
-
-    env_key = os.environ.get("GOOGLE_MAPS_API_KEY")
-    if env_key:
-        return env_key
-
-    if _running_in_colab() or _running_in_notebook():
-        import getpass
-
-        key = getpass.getpass("Enter your Google Maps Geocoding API key: ").strip()
-        if key:
-            return key
-
-    raise RuntimeError(
-        "No Google Maps API key found. Set GOOGLE_MAPS_API_KEY at the top of "
-        "generate_map.py, set a GOOGLE_MAPS_API_KEY environment variable, or "
-        "run this interactively (Colab/Jupyter) to be prompted for one."
-    )
-
-
-def _google_geocode_one(postal_code, api_key):
-    """Look up a single Canadian postal code via the Geocoding API's
-    'components' filter (exact postal_code + country match, not a free-text
-    search), returning (lat, lng, province_code) or (None, None, None) if
-    Google has no match for it."""
-    params = {
-        "components": f"postal_code:{postal_code}|country:CA",
-        "key": api_key,
-    }
-    url = GOOGLE_GEOCODE_URL + "?" + urllib.parse.urlencode(params)
-    with urllib.request.urlopen(url, timeout=20) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-
-    status = payload.get("status")
-    if status == "OK":
-        result = payload["results"][0]
-        location = result["geometry"]["location"]
-        province = None
-        for component in result.get("address_components", []):
-            if "administrative_area_level_1" in component.get("types", []):
-                province = component.get("short_name")
-                break
-        return location["lat"], location["lng"], province
-
-    if status in _GOOGLE_GEOCODE_NO_MATCH_STATUSES:
-        return None, None, None
-
-    # Anything else (REQUEST_DENIED, OVER_QUERY_LIMIT, INVALID_REQUEST,
-    # UNKNOWN_ERROR, ...) means the *request itself* is broken -- a bad key,
-    # billing not enabled, quota exhausted, etc. Fail loudly and immediately
-    # rather than silently turning every row into a dropped row.
-    raise RuntimeError(
-        f"Google Geocoding API returned status={status!r} for postal code "
-        f"'{postal_code}' ({payload.get('error_message', 'no further detail')}). "
-        f"Check that the Geocoding API is enabled and billing is set up for "
-        f"this API key in Google Cloud Console."
-    )
-
-
-def geocode_postal_codes(df):
-    """Add latitude/longitude/province columns based on COLUMN_GEOCODE_POSTAL,
-    using the Google Maps Geocoding API (full postal code precision)."""
-    api_key = _get_google_maps_api_key()
-
-    cleaned_codes = (
-        df[COLUMN_GEOCODE_POSTAL].str.upper().str.replace(r"[^A-Z0-9]", "", regex=True)
-    )
-
-    cache = {}
-    latitudes, longitudes, provinces = [], [], []
-    for code in cleaned_codes:
-        if code not in cache:
-            cache[code] = _google_geocode_one(code, api_key)
-            time.sleep(GOOGLE_GEOCODE_REQUEST_DELAY_SECONDS)
-        lat, lng, province = cache[code]
-        latitudes.append(lat)
-        longitudes.append(lng)
-        provinces.append(province)
-
+def prepare_coordinates(df):
+    """Use the spreadsheet's own COLUMN_LAT/COLUMN_LONG values as each pin's
+    location (no geocoding needed), and derive a province code from the
+    first letter of the postal code to apply ALLOWED_PROVINCES."""
     df = df.copy()
-    df["latitude"] = latitudes
-    df["longitude"] = longitudes
-    df["province_code"] = provinces
+    df["latitude"] = pd.to_numeric(df[COLUMN_LAT], errors="coerce")
+    df["longitude"] = pd.to_numeric(df[COLUMN_LONG], errors="coerce")
 
+    valid_range = (
+        df["latitude"].between(-90, 90) & df["longitude"].between(-180, 180)
+    )
     before = len(df)
-    df = df.dropna(subset=["latitude", "longitude"]).copy()
+    df = df[df["latitude"].notna() & df["longitude"].notna() & valid_range].copy()
     dropped = before - len(df)
     if dropped:
-        warnings.warn(f"Dropped {dropped} row(s) with un-geocodable postal codes.")
+        warnings.warn(
+            f"Dropped {dropped} row(s) with missing or invalid {COLUMN_LAT}/{COLUMN_LONG} values."
+        )
+
+    first_letter = df[COLUMN_GEOCODE_POSTAL].str.strip().str.upper().str[0]
+    df["province_code"] = first_letter.map(PROVINCE_BY_POSTAL_PREFIX)
 
     if ALLOWED_PROVINCES:
         before = len(df)
@@ -737,7 +654,7 @@ def package_output(m, output_dir=OUTPUT_DIR, output_zip=OUTPUT_ZIP):
 
 def generate_map_from_excel(input_path, output_zip=OUTPUT_ZIP):
     df = load_spreadsheet(input_path)
-    df = geocode_postal_codes(df)
+    df = prepare_coordinates(df)
     df = classify_rows(df)
     m = build_map(df)
     zip_path = package_output(m, output_zip=output_zip)
