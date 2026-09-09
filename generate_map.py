@@ -12,13 +12,17 @@ ClaimsPro and SCM share one color. Pario gets its own color. Both filters
 can be used together (AND logic) or on their own.
 
 Each worker is also connected to their classified Work Address by a
-straight line, and drive time/distance from their postal code to that
-address is computed via the Google Maps Distance Matrix API (for a chosen
-departure time: 7:30 AM or 4:30 PM). A left-hand sidebar lists every
-worker with an individual include/exclude checkbox, and a KPI panel
-recomputes live from whichever workers are currently included: base size,
-average/median drive time, % under 15/20/30 minutes, average distance,
-and the closest/farthest postal code by drive time.
+straight line. Drive time/distance is computed via the Google Maps
+Distance Matrix API for BOTH directions at once -- 7:30 AM (Worker's
+Postal -> Work Address) and 4:30 PM (Work Address -> Worker's Postal,
+reverse direction) -- and both are baked into the exported map.html, which
+has a live toggle to switch between them (no build-time choice, no API
+calls from the viewer's browser). A left-hand sidebar lists every worker
+with an individual include/exclude checkbox, and a KPI panel recomputes
+live, for whichever direction is toggled, from whichever workers are
+currently included: base size, average/median drive time, % under
+15/20/30 minutes, average distance, and the closest/farthest postal code
+by drive time.
 
 Designed to run top-to-bottom as a single Google Colab cell (or as a normal
 Python script). Everything you're likely to want to tweak lives in the
@@ -103,21 +107,54 @@ REGION_COLORS = {
 # Work Address - Line 1 categories to filter on. Matching is case-insensitive
 # and ignores extra whitespace, but otherwise looks for these as substrings
 # of the spreadsheet's address value (so "Suite 112, 6093 Iona Drive, Burnaby"
-# still matches "Suite 112, 6093 Iona Drive").
+# still matches "Suite 112, 6093 Iona Drive"). This is also the column name
+# matched in the spreadsheet -- COLUMN_ADDRESS_LINE1 above -- but the map's
+# own UI labels this filter with ADDRESS_FILTER_LABEL below instead.
 ADDRESS_CATEGORIES = [
     "8333 Eastlake Drive Suite 202",
     "1849 Welch Street",
     "Suite 112, 6093 Iona Drive",
 ]
 
+# Label shown in the map's UI (filter panel heading) for the Work Address
+# filter. Purely cosmetic -- COLUMN_ADDRESS_LINE1 (the spreadsheet column
+# name being matched) is unaffected.
+ADDRESS_FILTER_LABEL = "Work Address"
+
+# Marker/line/legend color per work address, and reflected on the map for
+# the destination pins themselves.
+ADDRESS_COLORS = {
+    "8333 Eastlake Drive Suite 202": "#EF6528",
+    "1849 Welch Street": "#4DB595",
+    "Suite 112, 6093 Iona Drive": "#7D7370",
+}
+UNKNOWN_ADDRESS_COLOR = "#555555"
+
 # Label used for rows that don't match any known Region keyword / Address category.
 UNKNOWN_REGION_LABEL = "Unclassified"
 UNKNOWN_ADDRESS_LABEL = "Other / Unmatched Address"
 UNKNOWN_COLOR = "gray"
 
-MAP_TITLE = "Worker Postal Code Map"
+MAP_TITLE = "Postal codes map: North Vancouver"
 MAP_START_LOCATION = [53.7267, -119.0]   # rough BC/AB midpoint
 MAP_START_ZOOM = 5
+
+# Background color for the sidebar's title header block.
+SIDEBAR_HEADER_BG_COLOR = "#3A4458"
+SIDEBAR_HEADER_TEXT_COLOR = "#ffffff"
+
+# Typeface used for all text on the map (filter/sidebar/KPI panels, popups).
+# Loaded from Google Fonts; falls back to a normal sans-serif stack if that
+# CDN is unreachable when the map is viewed (a missing web font degrades
+# gracefully, unlike a missing script, so this isn't vendored locally like
+# the JS/CSS libraries are).
+FONT_FAMILY = "'Open Sans', Arial, sans-serif"
+GOOGLE_FONT_CSS_URL = "https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap"
+
+# Default pin display mode when the map first loads: "individual" (every
+# worker pin shown separately, as before) or "cluster" (grouped via
+# Leaflet.markercluster). The viewer can switch with an in-page toggle.
+DEFAULT_PIN_DISPLAY_MODE = "individual"
 
 # ---------------------------------------------------------------------------
 # Drive-time CONFIG (Google Maps Platform: Geocoding API + Distance Matrix
@@ -138,16 +175,22 @@ MAP_START_ZOOM = 5
 #      prompted for it in a text box (masked input).
 GOOGLE_MAPS_API_KEY = ""
 
-# Which departure time to model drive times for. One of the keys in
-# DEPARTURE_TIME_OPTIONS below ("7:30 AM" or "4:30 PM"). Left blank, you'll
-# be prompted to choose when running interactively (Colab/Jupyter);
-# otherwise this default is used as-is.
-DEPARTURE_TIME_CHOICE = "7:30 AM"
-
+# Both directions/times below are always computed and baked into the
+# exported map.html -- the viewer picks between them with a toggle in the
+# deployed page itself (there is no build-time prompt for this; a static
+# export can't call the API live, so both must be precomputed). "AM" means
+# the morning commute (Worker's Postal -> Work Address); "PM" means the
+# afternoon commute (Work Address -> Worker's Postal, i.e. the reverse
+# direction -- drive time/distance can differ from the AM leg due to
+# one-way streets, ramps, and time-of-day traffic).
 DEPARTURE_TIME_OPTIONS = {
-    "7:30 AM": (7, 30),
-    "4:30 PM": (16, 30),
+    "AM": {"label": "7:30 AM", "hour": 7, "minute": 30},
+    "PM": {"label": "4:30 PM", "hour": 16, "minute": 30},
 }
+
+# Which direction the exported map shows by default when first opened
+# ("AM" or "PM"); the viewer can switch with the in-page toggle afterward.
+DEFAULT_DIRECTION = "AM"
 
 # Drive times are modeled for the next occurrence of this weekday (0=Monday
 # ... 6=Sunday) at the chosen time, in each worker's own province timezone
@@ -173,6 +216,22 @@ DRIVE_TIME_THRESHOLDS_MINUTES = [15, 20, 30]
 # markers plugin -- see build_map).
 DISTANCE_LINE_WEIGHT = 1.5
 DISTANCE_LINE_OPACITY = 0.55
+
+# Leaflet.markercluster powers the "Clustered" pin display mode (there is
+# no clustering in core Leaflet). If this plugin fails to load in the
+# viewer's browser, the map falls back to individual pins automatically
+# (see the defensive check in the injected JS) rather than breaking.
+LEAFLET_MARKERCLUSTER_VERSION = "1.5.3"
+LEAFLET_MARKERCLUSTER_JS_URL = (
+    f"https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/"
+    f"{LEAFLET_MARKERCLUSTER_VERSION}/leaflet.markercluster.js"
+)
+LEAFLET_MARKERCLUSTER_CSS_URLS = [
+    f"https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/"
+    f"{LEAFLET_MARKERCLUSTER_VERSION}/MarkerCluster.css",
+    f"https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/"
+    f"{LEAFLET_MARKERCLUSTER_VERSION}/MarkerCluster.Default.css",
+]
 
 OUTPUT_DIR = "postal_code_map_output"
 OUTPUT_ZIP = "postal_code_map_output.zip"
@@ -352,31 +411,6 @@ def _get_google_maps_api_key():
     )
 
 
-def _prompt_departure_time_choice():
-    """Ask which departure time to model drive times for, when running
-    interactively. Falls back to DEPARTURE_TIME_CHOICE otherwise (or if the
-    prompt is left blank)."""
-    if not (_running_in_colab() or _running_in_notebook()):
-        return DEPARTURE_TIME_CHOICE
-
-    options = list(DEPARTURE_TIME_OPTIONS.keys())
-    prompt_lines = ["Choose a departure time for drive-time calculations:"]
-    for idx, option in enumerate(options, start=1):
-        prompt_lines.append(f"  {idx}. {option}")
-    prompt_lines.append(f"Enter 1-{len(options)} (blank = default {DEPARTURE_TIME_CHOICE}): ")
-    choice = input("\n".join(prompt_lines)).strip()
-
-    if not choice:
-        return DEPARTURE_TIME_CHOICE
-    if choice in DEPARTURE_TIME_OPTIONS:
-        return choice
-    try:
-        return options[int(choice) - 1]
-    except (ValueError, IndexError):
-        print(f"Unrecognized choice {choice!r}; using default {DEPARTURE_TIME_CHOICE}.")
-        return DEPARTURE_TIME_CHOICE
-
-
 def _load_timezone(tz_name):
     try:
         return ZoneInfo(tz_name)
@@ -439,60 +473,89 @@ def geocode_work_addresses(df, api_key):
     return {category: _geocode_address_text(category, api_key) for category in categories}
 
 
-def _distance_matrix_batch(origin_latlngs, destination_latlng, departure_epoch, api_key):
-    """Query drive time/distance for up to DISTANCE_MATRIX_MAX_ORIGINS_PER_REQUEST
-    origins against a single destination, returning a list of (minutes, km)
-    (or (None, None) for an origin Google couldn't route), same order as
-    origin_latlngs. Batches internally if given more origins than the cap."""
+def _distance_matrix_request(origins, destinations, departure_epoch, api_key):
+    """Raw Distance Matrix API call: origins and destinations are lists of
+    (lat, lng). Returns the parsed 'rows' list (one row per origin, each
+    with an 'elements' list of one entry per destination) -- no batching,
+    caller must keep origins*destinations under the per-request cap."""
+    params = {
+        "origins": "|".join(f"{lat},{lng}" for lat, lng in origins),
+        "destinations": "|".join(f"{lat},{lng}" for lat, lng in destinations),
+        "departure_time": str(departure_epoch),
+        "traffic_model": "best_guess",
+        "mode": "driving",
+        "key": api_key,
+    }
+    url = GOOGLE_DISTANCE_MATRIX_URL + "?" + urllib.parse.urlencode(params)
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+
+    status = payload.get("status")
+    if status != "OK":
+        raise RuntimeError(
+            f"Google Distance Matrix API returned status={status!r} "
+            f"({payload.get('error_message', 'no further detail')}). Check that "
+            f"the Distance Matrix API is enabled and billing is set up for "
+            f"this API key in Google Cloud Console."
+        )
+    return payload["rows"]
+
+
+def _element_to_minutes_km(element):
+    if element.get("status") != "OK":
+        return None, None
+    duration_seconds = (
+        element["duration_in_traffic"]["value"]
+        if "duration_in_traffic" in element
+        else element["duration"]["value"]
+    )
+    return duration_seconds / 60.0, element["distance"]["value"] / 1000.0
+
+
+def _distance_matrix_many_origins_one_destination(origin_latlngs, destination_latlng, departure_epoch, api_key):
+    """Drive time/distance from each of many origins to a single destination
+    (the AM, Worker -> Address direction). Returns a list of (minutes, km)
+    in the same order as origin_latlngs, batching internally to stay under
+    DISTANCE_MATRIX_MAX_ORIGINS_PER_REQUEST origins per request."""
     results = []
     for start in range(0, len(origin_latlngs), DISTANCE_MATRIX_MAX_ORIGINS_PER_REQUEST):
         batch = origin_latlngs[start : start + DISTANCE_MATRIX_MAX_ORIGINS_PER_REQUEST]
-        params = {
-            "origins": "|".join(f"{lat},{lng}" for lat, lng in batch),
-            "destinations": f"{destination_latlng[0]},{destination_latlng[1]}",
-            "departure_time": str(departure_epoch),
-            "traffic_model": "best_guess",
-            "mode": "driving",
-            "key": api_key,
-        }
-        url = GOOGLE_DISTANCE_MATRIX_URL + "?" + urllib.parse.urlencode(params)
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-
-        status = payload.get("status")
-        if status != "OK":
-            raise RuntimeError(
-                f"Google Distance Matrix API returned status={status!r} "
-                f"({payload.get('error_message', 'no further detail')}). Check that "
-                f"the Distance Matrix API is enabled and billing is set up for "
-                f"this API key in Google Cloud Console."
-            )
-
-        for row in payload["rows"]:
-            element = row["elements"][0]
-            if element.get("status") == "OK":
-                duration_seconds = element["duration_in_traffic"]["value"] \
-                    if "duration_in_traffic" in element else element["duration"]["value"]
-                distance_km = element["distance"]["value"] / 1000.0
-                results.append((duration_seconds / 60.0, distance_km))
-            else:
-                results.append((None, None))
+        rows = _distance_matrix_request(batch, [destination_latlng], departure_epoch, api_key)
+        for row in rows:
+            results.append(_element_to_minutes_km(row["elements"][0]))
         time.sleep(0.05)
-
     return results
 
 
-def compute_drive_times(df, api_key, departure_choice):
-    """Add drive_minutes/distance_km/dest_lat/dest_lng columns by querying
-    the Distance Matrix API once per (address_category, province) group
-    (batched), using each province's own local timezone for the chosen
-    departure time. Rows with UNKNOWN_ADDRESS_LABEL or an unresolvable
-    province timezone get NaN and are excluded from drive-time KPIs."""
-    hour, minute = DEPARTURE_TIME_OPTIONS[departure_choice]
+def _distance_matrix_one_origin_many_destinations(origin_latlng, destination_latlngs, departure_epoch, api_key):
+    """Drive time/distance from a single origin to each of many destinations
+    (the PM, Address -> Worker direction). Returns a list of (minutes, km)
+    in the same order as destination_latlngs, batching internally to stay
+    under DISTANCE_MATRIX_MAX_ORIGINS_PER_REQUEST destinations per request."""
+    results = []
+    for start in range(0, len(destination_latlngs), DISTANCE_MATRIX_MAX_ORIGINS_PER_REQUEST):
+        batch = destination_latlngs[start : start + DISTANCE_MATRIX_MAX_ORIGINS_PER_REQUEST]
+        rows = _distance_matrix_request([origin_latlng], batch, departure_epoch, api_key)
+        elements = rows[0]["elements"]
+        for element in elements:
+            results.append(_element_to_minutes_km(element))
+        time.sleep(0.05)
+    return results
 
+
+def compute_drive_times(df, api_key):
+    """Add drive_minutes_am/distance_km_am (Worker's Postal -> Work Address,
+    modeled at 7:30 AM) and drive_minutes_pm/distance_km_pm (Work Address ->
+    Worker's Postal, modeled at 4:30 PM) columns, plus dest_lat/dest_lng,
+    by querying the Distance Matrix API once per (address_category,
+    province, direction) group (batched), using each province's own local
+    timezone. Rows with UNKNOWN_ADDRESS_LABEL or an unresolvable province
+    timezone get NaN in both directions and are excluded from drive-time
+    KPIs regardless of which direction is toggled."""
     df = df.copy()
-    df["drive_minutes"] = pd.NA
-    df["distance_km"] = pd.NA
+    for direction in DEPARTURE_TIME_OPTIONS:
+        df[f"drive_minutes_{direction.lower()}"] = pd.NA
+        df[f"distance_km_{direction.lower()}"] = pd.NA
     df["dest_lat"] = pd.NA
     df["dest_lng"] = pd.NA
 
@@ -507,7 +570,7 @@ def compute_drive_times(df, api_key, departure_choice):
     if skipped_no_address:
         warnings.warn(
             f"{skipped_no_address} row(s) have an unmatched Work Address - Line 1 "
-            f"and were skipped for drive-time calculation."
+            f"and were skipped for drive-time calculation (both directions)."
         )
 
     skipped_no_tz = 0
@@ -517,14 +580,26 @@ def compute_drive_times(df, api_key, departure_choice):
             skipped_no_tz += len(group)
             continue
 
-        departure_epoch = _next_departure_epoch(hour, minute, tz_name)
         destination = address_coords[category]
         origins = list(zip(group["latitude"], group["longitude"]))
-        results = _distance_matrix_batch(origins, destination, departure_epoch, api_key)
 
-        for idx, (minutes, km) in zip(group.index, results):
-            df.at[idx, "drive_minutes"] = minutes
-            df.at[idx, "distance_km"] = km
+        am = DEPARTURE_TIME_OPTIONS["AM"]
+        am_epoch = _next_departure_epoch(am["hour"], am["minute"], tz_name)
+        am_results = _distance_matrix_many_origins_one_destination(
+            origins, destination, am_epoch, api_key
+        )
+        for idx, (minutes, km) in zip(group.index, am_results):
+            df.at[idx, "drive_minutes_am"] = minutes
+            df.at[idx, "distance_km_am"] = km
+
+        pm = DEPARTURE_TIME_OPTIONS["PM"]
+        pm_epoch = _next_departure_epoch(pm["hour"], pm["minute"], tz_name)
+        pm_results = _distance_matrix_one_origin_many_destinations(
+            destination, origins, pm_epoch, api_key
+        )
+        for idx, (minutes, km) in zip(group.index, pm_results):
+            df.at[idx, "drive_minutes_pm"] = minutes
+            df.at[idx, "distance_km_pm"] = km
 
     if skipped_no_tz:
         warnings.warn(
@@ -532,15 +607,18 @@ def compute_drive_times(df, api_key, departure_choice):
             f"in PROVINCE_TIMEZONES and were skipped for drive-time calculation."
         )
 
-    df["drive_minutes"] = pd.to_numeric(df["drive_minutes"], errors="coerce")
-    df["distance_km"] = pd.to_numeric(df["distance_km"], errors="coerce")
+    for direction in DEPARTURE_TIME_OPTIONS:
+        suffix = direction.lower()
+        df[f"drive_minutes_{suffix}"] = pd.to_numeric(df[f"drive_minutes_{suffix}"], errors="coerce")
+        df[f"distance_km_{suffix}"] = pd.to_numeric(df[f"distance_km_{suffix}"], errors="coerce")
 
-    no_route = df["drive_minutes"].isna().sum() - skipped_no_address - skipped_no_tz
-    if no_route > 0:
-        warnings.warn(
-            f"{no_route} row(s) could not be routed by the Distance Matrix API "
-            f"(no driving route found) and have no drive time."
-        )
+        no_route = df[f"drive_minutes_{suffix}"].isna().sum() - skipped_no_address - skipped_no_tz
+        if no_route > 0:
+            warnings.warn(
+                f"{no_route} row(s) could not be routed by the Distance Matrix API "
+                f"for the {DEPARTURE_TIME_OPTIONS[direction]['label']} direction "
+                f"(no driving route found)."
+            )
 
     return df
 
@@ -548,6 +626,10 @@ def compute_drive_times(df, api_key, departure_choice):
 # ---------------------------------------------------------------------------
 # Step 5: Build the popup text
 # ---------------------------------------------------------------------------
+
+def _nullable_float(value):
+    return float(value) if pd.notna(value) else None
+
 
 def build_popup_html(row):
     address_line = ", ".join(
@@ -559,16 +641,20 @@ def build_popup_html(row):
         ]
         if pd.notna(part) and str(part).strip()
     )
-    if pd.notna(row.get("drive_minutes")):
-        drive_line = f"{row['drive_minutes']:.1f} min ({row['distance_km']:.1f} km)"
-    else:
-        drive_line = "no route computed"
+    def drive_line(direction):
+        minutes = row.get(f"drive_minutes_{direction.lower()}")
+        km = row.get(f"distance_km_{direction.lower()}")
+        return f"{minutes:.1f} min ({km:.1f} km)" if pd.notna(minutes) else "no route computed"
+
+    am_label = DEPARTURE_TIME_OPTIONS["AM"]["label"]
+    pm_label = DEPARTURE_TIME_OPTIONS["PM"]["label"]
 
     return (
         f"<b>Worker's Postal:</b> {escape(str(row[COLUMN_GEOCODE_POSTAL]))}<br>"
         f"<b>Region:</b> {escape(str(row['region_category']))}<br>"
         f"<b>Address:</b> {escape(address_line)}<br>"
-        f"<b>Drive time:</b> {escape(drive_line)}"
+        f"<b>{escape(am_label)} (Home → Work):</b> {escape(drive_line('AM'))}<br>"
+        f"<b>{escape(pm_label)} (Work → Home):</b> {escape(drive_line('PM'))}"
     )
 
 
@@ -576,12 +662,32 @@ def build_popup_html(row):
 # Step 6: Build the Folium map with combinable Region / Address checkboxes
 # ---------------------------------------------------------------------------
 
-def build_map(df, departure_choice=None):
+def build_map(df):
     import folium
     from folium import Element
 
     m = folium.Map(location=MAP_START_LOCATION, zoom_start=MAP_START_ZOOM, tiles="OpenStreetMap")
     m.get_root().html.add_child(Element(f"<title>{escape(MAP_TITLE)}</title>"))
+
+    # CSS is order-independent (safe in <head>, which is where folium's own
+    # `.header` children land -- before folium's own default CDN includes).
+    head_extras = [f'<link rel="stylesheet" href="{GOOGLE_FONT_CSS_URL}"/>']
+    head_extras += [f'<link rel="stylesheet" href="{url}"/>' for url in LEAFLET_MARKERCLUSTER_CSS_URLS]
+    head_extras.append(
+        f"<style>body, .leaflet-container, .leaflet-popup-content {{"
+        f"font-family: {FONT_FAMILY} !important; }}</style>"
+    )
+    for tag in head_extras:
+        m.get_root().header.add_child(Element(tag))
+
+    # Leaflet.markercluster extends L.FeatureGroup at load time, so it needs
+    # core Leaflet (L) to already exist. `.header` children render BEFORE
+    # folium's own default CDN includes (leaflet.js among them), so adding
+    # this script there would run it before L is defined and it would
+    # silently fail to define L.markerClusterGroup. `.html` children render
+    # in <body>, which always comes after <head> has finished executing, so
+    # Leaflet is guaranteed to be loaded first.
+    m.get_root().html.add_child(Element(f'<script src="{LEAFLET_MARKERCLUSTER_JS_URL}"></script>'))
 
     region_labels = list(REGION_KEYWORDS.keys())
     if (df["region_category"] == UNKNOWN_REGION_LABEL).any():
@@ -594,16 +700,25 @@ def build_map(df, departure_choice=None):
     # One destination marker per work address that actually has coordinates
     # (i.e. was successfully geocoded), keyed by address category so the
     # filter JS can toggle it alongside that address's worker pins/lines.
+    # Colored per ADDRESS_COLORS and drawn as a CircleMarker (bigger/bordered
+    # to stand out from worker pins) rather than folium's default Marker
+    # icon, since a custom color there would require the Leaflet.awesome-
+    # markers plugin -- the same secondary-CDN dependency that has already
+    # caused pins to silently disappear once in this project.
     dest_markers = {}
     has_dest = df["dest_lat"].notna() & df["dest_lng"].notna()
     for category, group in df[has_dest].groupby("address_category"):
         dest_lat = float(group["dest_lat"].iloc[0])
         dest_lng = float(group["dest_lng"].iloc[0])
-        # Plain default Leaflet marker (no icon= given): uses Leaflet's own
-        # bundled marker image, not the Leaflet.awesome-markers plugin, so
-        # it renders even if that secondary CDN is unreachable.
-        dest_marker = folium.Marker(
+        color = ADDRESS_COLORS.get(category, UNKNOWN_ADDRESS_COLOR)
+        dest_marker = folium.CircleMarker(
             location=[dest_lat, dest_lng],
+            radius=11,
+            color="#ffffff",
+            weight=2,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.95,
             popup=folium.Popup(f"<b>Work Address:</b> {escape(category)}", max_width=320),
         )
         dest_marker.add_to(m)
@@ -630,11 +745,12 @@ def build_map(df, departure_choice=None):
         )
         marker.add_to(m)
 
-        has_drive_time = pd.notna(row.get("drive_minutes"))
         has_dest_coords = pd.notna(row.get("dest_lat")) and pd.notna(row.get("dest_lng"))
 
         line_var = None
         if has_dest_coords:
+            # One straight line per worker; geometry is direction-independent
+            # (same two endpoints either way), so it isn't duplicated per AM/PM.
             line = folium.PolyLine(
                 locations=[
                     [row["latitude"], row["longitude"]],
@@ -656,12 +772,14 @@ def build_map(df, departure_choice=None):
                 "postal": row[COLUMN_GEOCODE_POSTAL],
                 "lat": row["latitude"],
                 "lng": row["longitude"],
-                "drive_minutes": float(row["drive_minutes"]) if has_drive_time else None,
-                "distance_km": float(row["distance_km"]) if pd.notna(row.get("distance_km")) else None,
+                "drive_minutes_am": _nullable_float(row.get("drive_minutes_am")),
+                "distance_km_am": _nullable_float(row.get("distance_km_am")),
+                "drive_minutes_pm": _nullable_float(row.get("drive_minutes_pm")),
+                "distance_km_pm": _nullable_float(row.get("distance_km_pm")),
             }
         )
 
-    _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, departure_choice)
+    _add_controls(m, marker_meta, region_labels, address_labels, dest_markers)
     return m
 
 
@@ -680,16 +798,21 @@ class _JsVarRef:
         self.name = name
 
 
-def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, departure_choice):
-    """Inject the custom Leaflet controls: two checkbox groups (Region, Work
-    Address), a left-hand sidebar listing every pin by Worker's Postal (with
-    its own per-worker include/exclude checkbox), and a KPI panel. A pin's
-    map visibility requires its region AND address to be checked AND its own
-    worker checkbox to be checked; the sidebar row itself only follows the
-    Region/Address filters (unchecking a worker deselects it without hiding
-    it from the list). The KPI panel recomputes from whichever pins are
-    currently included (filters + individually checked) and have a valid
-    drive time. Clicking a pin's postal-code label zooms/pans to it."""
+def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
+    """Inject the custom Leaflet controls: an AM/PM departure-time toggle,
+    two checkbox groups (Region, Work Address), a left-hand sidebar listing
+    every pin by Worker's Postal (with its own per-worker include/exclude
+    checkbox), and a KPI panel. A pin's map visibility requires its region
+    AND address to be checked AND its own worker checkbox to be checked;
+    the sidebar row itself only follows the Region/Address filters
+    (unchecking a worker deselects it without hiding it from the list).
+    The KPI panel and each sidebar row's drive time reflect whichever
+    direction (AM/PM) is currently toggled, computed from whichever pins
+    are currently included (filters + individually checked) and have a
+    valid drive time for that direction. Clicking a pin's postal-code
+    label zooms/pans to it. Both directions' data are already baked into
+    marker_meta at generation time -- the toggle only ever switches
+    between them client-side, no API access from the viewer's browser."""
     from folium import Element
 
     map_var = m.get_name()
@@ -714,78 +837,116 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
         return "\n".join(items)
 
     region_colors = {label: REGION_COLORS.get(label, UNKNOWN_COLOR) for label in region_labels}
+    address_colors = {label: ADDRESS_COLORS.get(label, UNKNOWN_ADDRESS_COLOR) for label in address_labels}
 
-    hour, minute = DEPARTURE_TIME_OPTIONS.get(departure_choice, (None, None))
     weekday_name = _WEEKDAY_NAMES[DRIVE_TIME_TARGET_WEEKDAY % 7]
-    departure_note = (
-        f"Drive times modeled for next {weekday_name} at {escape(str(departure_choice))} "
-        f"(each worker's local province time)."
-        if departure_choice else "Drive times not computed."
+
+    def direction_radio_html(direction, info):
+        checked = "checked" if direction == DEFAULT_DIRECTION else ""
+        arrow = "Home → Work" if direction == "AM" else "Work → Home"
+        return (
+            f'<label style="display:block;font-weight:normal;margin:2px 0;">'
+            f'<input type="radio" name="postal-map-direction" class="direction-toggle" '
+            f'value="{direction}" {checked}> {escape(info["label"])} ({escape(arrow)})</label>'
+        )
+
+    direction_radios_html = "\n".join(
+        direction_radio_html(direction, info) for direction, info in DEPARTURE_TIME_OPTIONS.items()
     )
 
     kpi_rows_html = "".join(
-        f'<div class="postal-map-kpi-row"><span>Share under {t} min</span>'
-        f'<span id="postal-map-kpi-pct-{t}">—</span></div>'
+        f'<div class="postal-map-kpi-row"><span>Under {t} min</span>'
+        f'<span style="display:flex; align-items:center; gap:6px;">'
+        f'<span id="postal-map-kpi-pct-{t}">—</span>'
+        f'<button class="threshold-show-btn" data-threshold="{t}" '
+        f'style="font-weight:normal; font-size:11px; padding:1px 8px;">Show</button>'
+        f'</span></div>'
         for t in DRIVE_TIME_THRESHOLDS_MINUTES
     )
 
+    pin_display_radios_html = "\n".join(
+        f'<label style="display:block;font-weight:normal;margin:2px 0;">'
+        f'<input type="radio" name="postal-map-pin-display" class="pin-display-toggle" '
+        f'value="{value}" {"checked" if value == DEFAULT_PIN_DISPLAY_MODE else ""}> {label}</label>'
+        for value, label in [("individual", "Individual pins"), ("cluster", "Clustered")]
+    )
+
     control_html = f"""
-    <div id="postal-map-filter-panel" style="
-        position: fixed; top: 10px; right: 10px; z-index: 9999;
-        background: white; padding: 10px 14px; border: 2px solid #444;
-        border-radius: 6px; font-family: Arial, sans-serif; font-size: 13px;
-        max-height: 90vh; overflow-y: auto; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
-      <div style="font-weight:bold; margin-bottom:6px;">{escape(MAP_TITLE)}</div>
-
-      <div style="font-weight:bold; margin-top:6px;">Region</div>
-      {checkbox_html("region", region_labels, color_map=region_colors)}
-      <button id="region-select-all" style="margin-top:4px;">All</button>
-      <button id="region-select-none">None</button>
-
-      <div style="font-weight:bold; margin-top:10px;">Work Address - Line 1</div>
-      {checkbox_html("address", address_labels)}
-      <button id="address-select-all" style="margin-top:4px;">All</button>
-      <button id="address-select-none">None</button>
-    </div>
-
-    <div id="postal-map-sidebar" style="
+    <style>#postal-map-stack button {{ font-family: {FONT_FAMILY}; }}</style>
+    <div id="postal-map-stack" style="
         position: fixed; top: 10px; left: 10px; z-index: 9999;
-        background: white; border: 2px solid #444; border-radius: 6px;
-        font-family: Arial, sans-serif; font-size: 13px;
-        width: 260px; max-height: 60vh; display: flex; flex-direction: column;
-        box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
-      <div style="font-weight:bold; padding:10px 14px 4px 14px;">
-        Pins (Worker's Postal)
-      </div>
-      <div id="postal-map-pin-count" style="padding:0 14px 4px 14px; color:#555;"></div>
-      <div style="padding:0 14px 6px 14px;">
-        <button id="worker-select-all">All</button>
-        <button id="worker-select-none">None</button>
-      </div>
-      <div id="postal-map-pin-list" style="overflow-y:auto; flex:1; min-height:0; padding:0 6px 8px 6px;"></div>
-    </div>
+        display: flex; flex-direction: column; gap: 10px;
+        width: 270px; max-height: 96vh;
+        font-family: {FONT_FAMILY}; font-size: 13px;">
 
-    <div id="postal-map-kpi-panel" style="
-        position: fixed; left: 10px; bottom: 10px; z-index: 9999;
-        background: white; border: 2px solid #444; border-radius: 6px;
-        font-family: Arial, sans-serif; font-size: 13px;
-        width: 260px; max-height: 36vh; overflow-y: auto;
-        box-shadow: 2px 2px 6px rgba(0,0,0,0.3); padding: 10px 14px;">
-      <div style="font-weight:bold; margin-bottom:4px;">Drive Time KPIs</div>
-      <div style="color:#555; font-size:11px; margin-bottom:8px;">{departure_note}</div>
-      <style>
-        #postal-map-kpi-panel .postal-map-kpi-row {{
-          display:flex; justify-content:space-between; gap:8px; margin:2px 0;
-        }}
-        #postal-map-kpi-panel .postal-map-kpi-row span:last-child {{ font-weight:bold; }}
-      </style>
-      <div class="postal-map-kpi-row"><span>Base size</span><span id="postal-map-kpi-base">—</span></div>
-      <div class="postal-map-kpi-row"><span>Average time</span><span id="postal-map-kpi-avg-time">—</span></div>
-      <div class="postal-map-kpi-row"><span>Median time</span><span id="postal-map-kpi-median-time">—</span></div>
-      {kpi_rows_html}
-      <div class="postal-map-kpi-row"><span>Average distance</span><span id="postal-map-kpi-avg-dist">—</span></div>
-      <div class="postal-map-kpi-row"><span>Closest</span><span id="postal-map-kpi-closest">—</span></div>
-      <div class="postal-map-kpi-row"><span>Farthest</span><span id="postal-map-kpi-farthest">—</span></div>
+      <div id="postal-map-filter-panel" style="
+          background: white; border: 2px solid #444;
+          border-radius: 6px; flex: 0 0 auto;
+          max-height: 46vh; overflow-y: auto; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
+        <div style="background:{SIDEBAR_HEADER_BG_COLOR}; color:{SIDEBAR_HEADER_TEXT_COLOR};
+            font-weight:bold; font-size:18px; padding:10px 14px; margin:-1px -1px 10px -1px;
+            border-radius:4px 4px 0 0;">
+          {escape(MAP_TITLE)}
+        </div>
+        <div style="padding:0 14px 10px 14px;">
+        <div style="font-weight:bold; margin-top:0;">Departure Time</div>
+        {direction_radios_html}
+        <div style="color:#777; font-size:11px; margin-top:2px;">
+          Modeled for every {escape(weekday_name)}, each worker's local province time.
+        </div>
+
+        <div style="font-weight:bold; margin-top:10px;">Pin Display</div>
+        {pin_display_radios_html}
+
+        <div style="font-weight:bold; margin-top:10px;">Region</div>
+        {checkbox_html("region", region_labels, color_map=region_colors)}
+        <button id="region-select-all" style="margin-top:4px;">All</button>
+        <button id="region-select-none">None</button>
+
+        <div style="font-weight:bold; margin-top:10px;">{escape(ADDRESS_FILTER_LABEL)}</div>
+        {checkbox_html("address", address_labels, color_map=address_colors)}
+        <button id="address-select-all" style="margin-top:4px;">All</button>
+        <button id="address-select-none">None</button>
+        </div>
+      </div>
+
+      <div id="postal-map-sidebar" style="
+          background: white; border: 2px solid #444; border-radius: 6px;
+          flex: 1 1 auto; min-height: 120px; display: flex; flex-direction: column;
+          overflow: hidden; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
+        <div style="font-weight:bold; padding:10px 14px 4px 14px;">
+          Pins (Worker's Postal)
+        </div>
+        <div id="postal-map-pin-count" style="padding:0 14px 4px 14px; color:#555;"></div>
+        <div style="padding:0 14px 6px 14px;">
+          <button id="worker-select-all">All</button>
+          <button id="worker-select-none">None</button>
+        </div>
+        <div id="postal-map-pin-list" style="overflow-y:auto; flex:1; min-height:0; padding:0 6px 8px 6px;"></div>
+      </div>
+
+      <div id="postal-map-kpi-panel" style="
+          background: white; border: 2px solid #444; border-radius: 6px;
+          flex: 0 0 auto; max-height: 34vh; overflow-y: auto;
+          box-shadow: 2px 2px 6px rgba(0,0,0,0.3); padding: 10px 14px;">
+        <div style="font-weight:bold; margin-bottom:4px;">Drive Time KPIs</div>
+        <div id="postal-map-kpi-direction-note" style="color:#555; font-size:11px; margin-bottom:8px;"></div>
+        <style>
+          #postal-map-kpi-panel .postal-map-kpi-row {{
+            display:flex; justify-content:space-between; gap:8px; margin:2px 0;
+          }}
+          #postal-map-kpi-panel .postal-map-kpi-row span:last-child {{ font-weight:bold; }}
+        </style>
+        <div class="postal-map-kpi-row"><span>Base size</span><span id="postal-map-kpi-base">—</span></div>
+        <div class="postal-map-kpi-row"><span>Average time</span><span id="postal-map-kpi-avg-time">—</span></div>
+        <div class="postal-map-kpi-row"><span>Median time</span><span id="postal-map-kpi-median-time">—</span></div>
+        {kpi_rows_html}
+        <div id="postal-map-threshold-note" style="color:#555; font-size:11px; margin:4px 0;"></div>
+        <button id="threshold-clear-btn" style="font-size:11px; margin-bottom:6px;">Clear filter</button>
+        <div class="postal-map-kpi-row"><span>Average distance</span><span id="postal-map-kpi-avg-dist">—</span></div>
+        <div class="postal-map-kpi-row"><span>Closest</span><span id="postal-map-kpi-closest">—</span></div>
+        <div class="postal-map-kpi-row"><span>Farthest</span><span id="postal-map-kpi-farthest">—</span></div>
+      </div>
     </div>
     """
 
@@ -810,8 +971,10 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
                 "postal": str(meta["postal"]),
                 "lat": float(meta["lat"]),
                 "lng": float(meta["lng"]),
-                "driveMinutes": meta["drive_minutes"],
-                "distanceKm": meta["distance_km"],
+                "driveMinutesAM": meta["drive_minutes_am"],
+                "distanceKmAM": meta["distance_km_am"],
+                "driveMinutesPM": meta["drive_minutes_pm"],
+                "distanceKmPM": meta["distance_km_pm"],
             }.items()
         )
         + "}"
@@ -829,6 +992,11 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
         f"{json.dumps(r)}: {json.dumps(region_colors[r])}" for r in region_labels
     )
     thresholds_js = ", ".join(str(t) for t in DRIVE_TIME_THRESHOLDS_MINUTES)
+    direction_labels_js = ", ".join(
+        f"{json.dumps(direction)}: {json.dumps(info['label'])}"
+        for direction, info in DEPARTURE_TIME_OPTIONS.items()
+    )
+    default_direction_js = json.dumps(DEFAULT_DIRECTION)
 
     filter_js = f"""
     (function() {{
@@ -841,11 +1009,45 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
         var addressOrder = [{address_order_js}];
         var regionColors = {{{region_colors_js}}};
         var kpiThresholds = [{thresholds_js}];
+        var directionLabels = {{{direction_labels_js}}};
+        var currentDirection = {default_direction_js};
+        var pinDisplayMode = {json.dumps(DEFAULT_PIN_DISPLAY_MODE)};
+        // When set (via a KPI "Show" button), only pins whose drive time in
+        // the current direction is <= this many minutes are shown anywhere
+        // (map and sidebar); null means no threshold filter is active.
+        var activeThreshold = null;
+        // Leaflet.markercluster has no core-Leaflet fallback; if that plugin
+        // failed to load (e.g. its CDN was unreachable), clusterGroup stays
+        // null and the map just behaves as "individual pins" always, rather
+        // than throwing.
+        // singleMarkerMode keeps the numbered cluster-circle look even for a
+        // "cluster" of one pin, so every group in Clustered view shows a
+        // count (down to 1) instead of a lone pin rendering unlabeled.
+        var clusterGroup = (typeof L.markerClusterGroup === 'function')
+          ? L.markerClusterGroup({{ singleMarkerMode: true }})
+          : null;
+        if (!clusterGroup) {{
+          document.querySelectorAll('.pin-display-toggle').forEach(function(radio) {{
+            if (radio.value === 'cluster') {{ radio.disabled = true; }}
+          }});
+        }}
 
-        markerInfo.forEach(function(info) {{ info.workerChecked = true; }});
+        markerInfo.forEach(function(info) {{
+          info.workerChecked = true;
+          info.addedDirect = false;
+          info.addedToCluster = false;
+        }});
+
+        function driveMinutesFor(info) {{
+          return currentDirection === 'AM' ? info.driveMinutesAM : info.driveMinutesPM;
+        }}
+        function distanceKmFor(info) {{
+          return currentDirection === 'AM' ? info.distanceKmAM : info.distanceKmPM;
+        }}
 
         var pinListEl = document.getElementById('postal-map-pin-list');
         var pinCountEl = document.getElementById('postal-map-pin-count');
+        var directionNoteEl = document.getElementById('postal-map-kpi-direction-note');
 
         function groupKey(region) {{
           return 'postal-map-group-' + region.replace(/[^a-zA-Z0-9]/g, '_');
@@ -911,12 +1113,12 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
           var labelSpan = document.createElement('span');
           labelSpan.style.cursor = 'pointer';
           labelSpan.style.flex = '1';
-          labelSpan.textContent = info.postal + ' (' + formatMinutes(info.driveMinutes) + ')';
           labelSpan.addEventListener('click', function() {{
             {map_var}.setView([info.lat, info.lng], {SIDEBAR_ZOOM_LEVEL});
             info.var.openPopup();
           }});
           row.appendChild(labelSpan);
+          info.labelSpanEl = labelSpan;
 
           var rowsForRegion = groupRowsEls[info.region];
           if (rowsForRegion) {{
@@ -951,7 +1153,7 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
         function updateKpiPanel(included) {{
           var byId = function(id) {{ return document.getElementById(id); }};
           var base = included.length;
-          byId('postal-map-kpi-base').textContent = base;
+          byId('postal-map-kpi-base').textContent = base + ' ' + (base === 1 ? 'employee' : 'employees');
 
           if (base === 0) {{
             byId('postal-map-kpi-avg-time').textContent = '—';
@@ -966,8 +1168,8 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
             return;
           }}
 
-          var times = included.map(function(i) {{ return i.driveMinutes; }});
-          var dists = included.map(function(i) {{ return i.distanceKm; }});
+          var times = included.map(driveMinutesFor);
+          var dists = included.map(distanceKmFor);
           var sortedTimes = times.slice().sort(function(a, b) {{ return a - b; }});
           var avgTime = times.reduce(function(a, b) {{ return a + b; }}, 0) / base;
           var avgDist = dists.reduce(function(a, b) {{ return a + b; }}, 0) / base;
@@ -983,10 +1185,14 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
             el.textContent = (100 * count / base).toFixed(0) + '%';
           }});
 
-          var closest = included.reduce(function(a, b) {{ return b.driveMinutes < a.driveMinutes ? b : a; }});
-          var farthest = included.reduce(function(a, b) {{ return b.driveMinutes > a.driveMinutes ? b : a; }});
-          byId('postal-map-kpi-closest').textContent = closest.postal + ' (' + closest.driveMinutes.toFixed(1) + ' min)';
-          byId('postal-map-kpi-farthest').textContent = farthest.postal + ' (' + farthest.driveMinutes.toFixed(1) + ' min)';
+          var closest = included.reduce(function(a, b) {{
+            return driveMinutesFor(b) < driveMinutesFor(a) ? b : a;
+          }});
+          var farthest = included.reduce(function(a, b) {{
+            return driveMinutesFor(b) > driveMinutesFor(a) ? b : a;
+          }});
+          byId('postal-map-kpi-closest').textContent = closest.postal + ' (' + driveMinutesFor(closest).toFixed(1) + ' min)';
+          byId('postal-map-kpi-farthest').textContent = farthest.postal + ' (' + driveMinutesFor(farthest).toFixed(1) + ' min)';
         }}
 
         function recomputeAll() {{
@@ -995,22 +1201,62 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
           var visibleCount = 0;
           var included = [];
 
+          if (directionNoteEl) {{
+            directionNoteEl.textContent = 'Showing ' + directionLabels[currentDirection] +
+              ' (' + (currentDirection === 'AM' ? 'Home → Work' : 'Work → Home') + ').';
+          }}
+
+          var thresholdNoteEl = document.getElementById('postal-map-threshold-note');
+          if (thresholdNoteEl) {{
+            thresholdNoteEl.textContent = (activeThreshold !== null)
+              ? 'Showing only pins under ' + activeThreshold + ' min.'
+              : '';
+          }}
+          document.querySelectorAll('.threshold-show-btn').forEach(function(btn) {{
+            var isActive = activeThreshold !== null && String(activeThreshold) === btn.getAttribute('data-threshold');
+            btn.style.fontWeight = isActive ? 'bold' : 'normal';
+            btn.style.background = isActive ? '#dde6f7' : '';
+          }});
+
+          var useCluster = pinDisplayMode === 'cluster' && clusterGroup;
+          if (clusterGroup) {{
+            if (useCluster) {{
+              if (!{map_var}.hasLayer(clusterGroup)) {{ clusterGroup.addTo({map_var}); }}
+            }} else {{
+              if ({map_var}.hasLayer(clusterGroup)) {{ {map_var}.removeLayer(clusterGroup); }}
+            }}
+          }}
+
           markerInfo.forEach(function(info) {{
+            var minutes = driveMinutesFor(info);
+            var passesThreshold = activeThreshold === null ||
+              (minutes !== null && minutes !== undefined && minutes <= activeThreshold);
             var filterMatch = regions.indexOf(info.region) !== -1 &&
-                               addresses.indexOf(info.address) !== -1;
+                               addresses.indexOf(info.address) !== -1 &&
+                               passesThreshold;
             var onMap = filterMatch && info.workerChecked;
 
+            if (onMap && useCluster) {{
+              if (info.addedDirect) {{ {map_var}.removeLayer(info.var); info.addedDirect = false; }}
+              if (!info.addedToCluster) {{ clusterGroup.addLayer(info.var); info.addedToCluster = true; }}
+            }} else if (onMap) {{
+              if (info.addedToCluster) {{ clusterGroup.removeLayer(info.var); info.addedToCluster = false; }}
+              if (!info.addedDirect) {{ info.var.addTo({map_var}); info.addedDirect = true; }}
+            }} else {{
+              if (info.addedDirect) {{ {map_var}.removeLayer(info.var); info.addedDirect = false; }}
+              if (info.addedToCluster) {{ clusterGroup.removeLayer(info.var); info.addedToCluster = false; }}
+            }}
+
             if (onMap) {{
-              if (!{map_var}.hasLayer(info.var)) {{ info.var.addTo({map_var}); }}
               if (info.lineVar && !{map_var}.hasLayer(info.lineVar)) {{ info.lineVar.addTo({map_var}); }}
               visibleCount++;
             }} else {{
-              if ({map_var}.hasLayer(info.var)) {{ {map_var}.removeLayer(info.var); }}
               if (info.lineVar && {map_var}.hasLayer(info.lineVar)) {{ {map_var}.removeLayer(info.lineVar); }}
             }}
             info.rowEl.style.display = filterMatch ? '' : 'none';
+            info.labelSpanEl.textContent = info.postal + ' (' + formatMinutes(minutes) + ')';
 
-            if (onMap && info.driveMinutes !== null && info.driveMinutes !== undefined) {{
+            if (onMap && minutes !== null && minutes !== undefined) {{
               included.push(info);
             }}
           }});
@@ -1036,6 +1282,38 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers, d
 
           pinCountEl.textContent = visibleCount + ' of ' + markerInfo.length + ' shown';
           updateKpiPanel(included);
+        }}
+
+        document.querySelectorAll('.direction-toggle').forEach(function(radio) {{
+          radio.addEventListener('change', function() {{
+            if (radio.checked) {{
+              currentDirection = radio.value;
+              recomputeAll();
+            }}
+          }});
+        }});
+
+        document.querySelectorAll('.pin-display-toggle').forEach(function(radio) {{
+          radio.addEventListener('change', function() {{
+            if (radio.checked) {{
+              pinDisplayMode = radio.value;
+              recomputeAll();
+            }}
+          }});
+        }});
+
+        document.querySelectorAll('.threshold-show-btn').forEach(function(btn) {{
+          btn.addEventListener('click', function() {{
+            activeThreshold = parseInt(btn.getAttribute('data-threshold'), 10);
+            recomputeAll();
+          }});
+        }});
+        var thresholdClearBtn = document.getElementById('threshold-clear-btn');
+        if (thresholdClearBtn) {{
+          thresholdClearBtn.addEventListener('click', function() {{
+            activeThreshold = null;
+            recomputeAll();
+          }});
         }}
 
         document.querySelectorAll('.region-filter, .address-filter').forEach(function(b) {{
@@ -1193,10 +1471,9 @@ def generate_map_from_excel(input_path, output_zip=OUTPUT_ZIP):
     df = classify_rows(df)
 
     api_key = _get_google_maps_api_key()
-    departure_choice = _prompt_departure_time_choice()
-    df = compute_drive_times(df, api_key, departure_choice)
+    df = compute_drive_times(df, api_key)
 
-    m = build_map(df, departure_choice=departure_choice)
+    m = build_map(df)
     zip_path = package_output(m, output_zip=output_zip)
     print(f"Done. {len(df)} pins plotted. Output written to: {zip_path}")
     return zip_path
