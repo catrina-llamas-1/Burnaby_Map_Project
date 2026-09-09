@@ -856,7 +856,11 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
 
     kpi_rows_html = "".join(
         f'<div class="postal-map-kpi-row"><span>Under {t} min</span>'
-        f'<span id="postal-map-kpi-pct-{t}">—</span></div>'
+        f'<span style="display:flex; align-items:center; gap:6px;">'
+        f'<span id="postal-map-kpi-pct-{t}">—</span>'
+        f'<button class="threshold-show-btn" data-threshold="{t}" '
+        f'style="font-weight:normal; font-size:11px; padding:1px 8px;">Show</button>'
+        f'</span></div>'
         for t in DRIVE_TIME_THRESHOLDS_MINUTES
     )
 
@@ -888,7 +892,7 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         <div style="font-weight:bold; margin-top:0;">Departure Time</div>
         {direction_radios_html}
         <div style="color:#777; font-size:11px; margin-top:2px;">
-          Modeled for next {escape(weekday_name)}, each worker's local province time.
+          Modeled for every {escape(weekday_name)}, each worker's local province time.
         </div>
 
         <div style="font-weight:bold; margin-top:10px;">Pin Display</div>
@@ -937,6 +941,8 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         <div class="postal-map-kpi-row"><span>Average time</span><span id="postal-map-kpi-avg-time">—</span></div>
         <div class="postal-map-kpi-row"><span>Median time</span><span id="postal-map-kpi-median-time">—</span></div>
         {kpi_rows_html}
+        <div id="postal-map-threshold-note" style="color:#555; font-size:11px; margin:4px 0;"></div>
+        <button id="threshold-clear-btn" style="font-size:11px; margin-bottom:6px;">Clear filter</button>
         <div class="postal-map-kpi-row"><span>Average distance</span><span id="postal-map-kpi-avg-dist">—</span></div>
         <div class="postal-map-kpi-row"><span>Closest</span><span id="postal-map-kpi-closest">—</span></div>
         <div class="postal-map-kpi-row"><span>Farthest</span><span id="postal-map-kpi-farthest">—</span></div>
@@ -1006,6 +1012,10 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         var directionLabels = {{{direction_labels_js}}};
         var currentDirection = {default_direction_js};
         var pinDisplayMode = {json.dumps(DEFAULT_PIN_DISPLAY_MODE)};
+        // When set (via a KPI "Show" button), only pins whose drive time in
+        // the current direction is <= this many minutes are shown anywhere
+        // (map and sidebar); null means no threshold filter is active.
+        var activeThreshold = null;
         // Leaflet.markercluster has no core-Leaflet fallback; if that plugin
         // failed to load (e.g. its CDN was unreachable), clusterGroup stays
         // null and the map just behaves as "individual pins" always, rather
@@ -1196,6 +1206,18 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
               ' (' + (currentDirection === 'AM' ? 'Home → Work' : 'Work → Home') + ').';
           }}
 
+          var thresholdNoteEl = document.getElementById('postal-map-threshold-note');
+          if (thresholdNoteEl) {{
+            thresholdNoteEl.textContent = (activeThreshold !== null)
+              ? 'Showing only pins under ' + activeThreshold + ' min.'
+              : '';
+          }}
+          document.querySelectorAll('.threshold-show-btn').forEach(function(btn) {{
+            var isActive = activeThreshold !== null && String(activeThreshold) === btn.getAttribute('data-threshold');
+            btn.style.fontWeight = isActive ? 'bold' : 'normal';
+            btn.style.background = isActive ? '#dde6f7' : '';
+          }});
+
           var useCluster = pinDisplayMode === 'cluster' && clusterGroup;
           if (clusterGroup) {{
             if (useCluster) {{
@@ -1206,8 +1228,12 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
           }}
 
           markerInfo.forEach(function(info) {{
+            var minutes = driveMinutesFor(info);
+            var passesThreshold = activeThreshold === null ||
+              (minutes !== null && minutes !== undefined && minutes <= activeThreshold);
             var filterMatch = regions.indexOf(info.region) !== -1 &&
-                               addresses.indexOf(info.address) !== -1;
+                               addresses.indexOf(info.address) !== -1 &&
+                               passesThreshold;
             var onMap = filterMatch && info.workerChecked;
 
             if (onMap && useCluster) {{
@@ -1228,9 +1254,8 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
               if (info.lineVar && {map_var}.hasLayer(info.lineVar)) {{ {map_var}.removeLayer(info.lineVar); }}
             }}
             info.rowEl.style.display = filterMatch ? '' : 'none';
-            info.labelSpanEl.textContent = info.postal + ' (' + formatMinutes(driveMinutesFor(info)) + ')';
+            info.labelSpanEl.textContent = info.postal + ' (' + formatMinutes(minutes) + ')';
 
-            var minutes = driveMinutesFor(info);
             if (onMap && minutes !== null && minutes !== undefined) {{
               included.push(info);
             }}
@@ -1276,6 +1301,20 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
             }}
           }});
         }});
+
+        document.querySelectorAll('.threshold-show-btn').forEach(function(btn) {{
+          btn.addEventListener('click', function() {{
+            activeThreshold = parseInt(btn.getAttribute('data-threshold'), 10);
+            recomputeAll();
+          }});
+        }});
+        var thresholdClearBtn = document.getElementById('threshold-clear-btn');
+        if (thresholdClearBtn) {{
+          thresholdClearBtn.addEventListener('click', function() {{
+            activeThreshold = null;
+            recomputeAll();
+          }});
+        }}
 
         document.querySelectorAll('.region-filter, .address-filter').forEach(function(b) {{
           b.addEventListener('change', recomputeAll);

@@ -67,6 +67,11 @@ content is fixed at generation time.
   and individual checkboxes): base size (shown as "N employees"), average
   drive time, median drive time, % of workers under 15 / 20 / 30 minutes,
   average distance (km), and the closest/farthest worker by drive time.
+  Each "Under N min" row has its own **Show** button — clicking it hides
+  every pin/line except workers within that drive time (works in both
+  Individual and Clustered pin display), and updates the sidebar and KPIs
+  to match. A **Clear filter** button resets back to the normal Region /
+  Work Address / worker selection.
 
 ## Google Maps API key (required for drive times)
 
