@@ -26,11 +26,15 @@ CONFIG block below.
 
 Input:  an .xlsx spreadsheet with (at least) these columns:
           - Worker's Postal              (postal code, shown in the popup)
-          - Lat, Long                    (coordinates used to place the pin)
           - Region                       (free text scanned for keywords)
           - Work Address - Line 1
           - City
           - Postal or ZIP code           (display-only postal/zip for the address)
+
+        Lat/Long columns are optional. If present, those coordinates are
+        used as-is; any row missing them (or missing the columns entirely)
+        has its pin placed by converting Worker's Postal into coordinates
+        via offline postal-code lookup (pgeocode, FSA-level accuracy).
 
 Requires a Google Maps API key (Geocoding API + Distance Matrix API, both
 enabled with billing set up) -- see GOOGLE_MAPS_API_KEY in the CONFIG
@@ -93,12 +97,14 @@ REGION_KEYWORDS = {
     "Pario": ["pario"],
 }
 
-# Marker color per region. ClaimsPro & SCM intentionally share "Blue".
-REGION_COLORS = {
-    "ClaimsPro": "#7e9cd1",  # Blue
-    "SCM": "#7e9cd1",        # Blue
-    "Pario": "#55489d",      # Purple
-}
+# Every worker pin uses this single color, based purely on having a
+# Worker's Postal value -- no per-region color coding.
+PIN_COLOR = "#2c7fb8"
+
+# Marker color per region. All regions intentionally share one PIN_COLOR
+# (kept as a per-region map so the sidebar/legend grouping code below can
+# stay unchanged) -- edit PIN_COLOR above to change every pin's color.
+REGION_COLORS = {region: PIN_COLOR for region in REGION_KEYWORDS}
 
 # Work Address - Line 1 categories to filter on. Matching is case-insensitive
 # and ignores extra whitespace, but otherwise looks for these as substrings
@@ -113,7 +119,7 @@ ADDRESS_CATEGORIES = [
 # Label used for rows that don't match any known Region keyword / Address category.
 UNKNOWN_REGION_LABEL = "Unclassified"
 UNKNOWN_ADDRESS_LABEL = "Other / Unmatched Address"
-UNKNOWN_COLOR = "gray"
+UNKNOWN_COLOR = PIN_COLOR
 
 MAP_TITLE = "Worker Postal Code Map"
 MAP_START_LOCATION = [53.7267, -119.0]   # rough BC/AB midpoint
@@ -216,13 +222,15 @@ def load_spreadsheet(path):
 
     required = [
         COLUMN_GEOCODE_POSTAL,
-        COLUMN_LAT,
-        COLUMN_LONG,
         COLUMN_REGION,
         COLUMN_ADDRESS_LINE1,
         COLUMN_CITY,
         COLUMN_DISPLAY_POSTAL,
     ]
+    # Lat/Long are optional: when absent (or blank on a given row), pin
+    # coordinates are instead derived from Worker's Postal -- see
+    # geocode_postal_codes().
+    optional = [COLUMN_LAT, COLUMN_LONG]
 
     actual_by_normalized = {}
     for col in df.columns:
@@ -237,6 +245,12 @@ def load_spreadsheet(path):
         if actual is None:
             missing.append(wanted)
         elif actual != wanted:
+            rename_map[actual] = wanted
+
+    for wanted in optional:
+        key = _normalize_column_name(wanted)
+        actual = actual_by_normalized.get(key)
+        if actual is not None and actual != wanted:
             rename_map[actual] = wanted
 
     if missing:
@@ -257,13 +271,56 @@ def load_spreadsheet(path):
 # Step 2: Read pin coordinates directly from the spreadsheet
 # ---------------------------------------------------------------------------
 
+def geocode_postal_codes(df):
+    """Fill in latitude/longitude for any row that doesn't already have a
+    valid pair, by converting its Worker's Postal value into coordinates.
+    Uses pgeocode (offline, no API key/network needed), which resolves a
+    Canadian postal code to its FSA (first 3 characters) centroid -- the
+    finest precision available without a paid postal-code geocoding
+    service."""
+    missing = df["latitude"].isna() | df["longitude"].isna()
+    if not missing.any():
+        return df
+
+    import pgeocode
+
+    nomi = pgeocode.Nominatim("ca")
+    fsa = (
+        df.loc[missing, COLUMN_GEOCODE_POSTAL]
+        .astype(str).str.strip().str.upper().str[:3]
+    )
+    looked_up = nomi.query_postal_code(fsa.tolist())
+    df.loc[missing, "latitude"] = looked_up["latitude"].to_numpy()
+    df.loc[missing, "longitude"] = looked_up["longitude"].to_numpy()
+
+    still_missing = (df["latitude"].isna() | df["longitude"].isna()) & missing
+    n = int(still_missing.sum())
+    if n:
+        warnings.warn(
+            f"{n} row(s) could not be geocoded from {COLUMN_GEOCODE_POSTAL} "
+            f"(unrecognized postal code) and will be dropped."
+        )
+
+    return df
+
+
 def prepare_coordinates(df):
     """Use the spreadsheet's own COLUMN_LAT/COLUMN_LONG values as each pin's
-    location (no geocoding needed), and derive a province code from the
-    first letter of the postal code to apply ALLOWED_PROVINCES."""
+    location where available, falling back to converting Worker's Postal
+    into coordinates (see geocode_postal_codes) for any row missing them.
+    Also derives a province code from the first letter of the postal code
+    to apply ALLOWED_PROVINCES."""
     df = df.copy()
-    df["latitude"] = pd.to_numeric(df[COLUMN_LAT], errors="coerce")
-    df["longitude"] = pd.to_numeric(df[COLUMN_LONG], errors="coerce")
+    if COLUMN_LAT in df.columns:
+        df["latitude"] = pd.to_numeric(df[COLUMN_LAT], errors="coerce")
+    else:
+        df["latitude"] = pd.NA
+    if COLUMN_LONG in df.columns:
+        df["longitude"] = pd.to_numeric(df[COLUMN_LONG], errors="coerce")
+    else:
+        df["longitude"] = pd.NA
+
+    df = geocode_postal_codes(df)
 
     valid_range = (
         df["latitude"].between(-90, 90) & df["longitude"].between(-180, 180)

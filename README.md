@@ -6,7 +6,11 @@ usable together or independently. The Region filter shows a color legend
 next to each checkbox. Output is a zip you can host as a static site.
 
 Pins are placed using the `Lat`/`Long` coordinates already present in the
-spreadsheet — no geocoding needed to plot them.
+spreadsheet when available. Any row missing them (or with the columns left
+out entirely) has its pin placed automatically by converting `Worker's
+Postal` into coordinates via offline postal-code lookup (`pgeocode`,
+FSA-level accuracy — no API key or network access needed). All pins use a
+single color, configurable via `PIN_COLOR` in the `CONFIG` block.
 
 ## Drive times, straight-line distance & KPIs
 
@@ -73,8 +77,10 @@ python generate_map.py path/to/spreadsheet.xlsx
 
 - `Worker's Postal` — postal code, shown in the popup/sidebar (its first
   letter is also used to determine province for the BC/AB filter and for
-  picking the right timezone for drive-time calculations)
-- `Lat`, `Long` — coordinates used to place the pin directly
+  picking the right timezone for drive-time calculations; it's also
+  converted into coordinates for any row without a valid `Lat`/`Long`)
+- `Lat`, `Long` — *optional*. Coordinates used to place the pin directly
+  when present; otherwise derived from `Worker's Postal`.
 - `Region` — free text; scanned for keywords (`ClaimsPro`, `SCM`, `Pario`)
 - `Work Address - Line 1`
 - `City`
