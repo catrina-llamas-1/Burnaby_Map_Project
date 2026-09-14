@@ -48,13 +48,19 @@ a map with no drive times.
 
 ## Background map tiles
 
-Background map tiles come from CARTO (rendered from OpenStreetMap data)
-instead of OSM's own raw tile servers, which are volunteer-run and only
-meant for light, single-browser-tab use — anything embedded in an app or
-a hosted export gets blocked ("Access blocked" tiles) under their usage
-policy. CARTO's basemaps are free for this kind of use and need no API
-key. The style is set via `CARTO_TILE_STYLE` in the `CONFIG` block at the
-top of `generate_map.py` (default: `"CartoDB positron"`).
+Background map tiles come from OpenStreetMap's own tile servers, which
+are volunteer-run and require every request to properly identify itself
+(see [OSM's tile usage policy](https://operations.osmfoundation.org/policies/tiles/)).
+A normal browser viewing the exported map from a real hosted URL already
+sends a `Referer` header identifying the page, which satisfies this — but
+opening `map.html` as a local `file://` path sends no `Referer` and can
+get flagged as unidentified/bulk traffic, resulting in "Access blocked"
+tiles.
+
+**Always view/test the exported map via a real URL** — either the static
+host it's deployed to, or a local static server for testing
+(`python -m http.server` from inside the unzipped output, then visit
+`http://localhost:8000/`) — never by double-clicking `map.html` directly.
 
 ## Run in Google Colab
 
@@ -105,7 +111,8 @@ title/start location) lives in the `CONFIG` block at the top of
 so the map doesn't depend on any CDN being reachable when someone opens it
 later. Upload `map.html`, `index.html`, and `assets/` together, keeping
 their relative layout, to any static host (GitHub Pages, S3, Netlify, etc.).
-Background map tiles are still fetched live from CARTO, so viewers
-need internet access for those to load — same as any web map. Drive times
+Background map tiles are still fetched live from OpenStreetMap, so
+viewers need internet access for those to load (see "Background map
+tiles" above for the Referer/hosting caveat). Drive times
 and distances are computed once when you run the script and baked into the
 page; the deployed map does not call the Google Maps API itself.

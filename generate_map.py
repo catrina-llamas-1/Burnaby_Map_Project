@@ -41,8 +41,9 @@ Requires a Google Maps API key (Geocoding API + Distance Matrix API, both
 enabled with billing set up) -- see GOOGLE_MAPS_API_KEY in the CONFIG
 block. You'll be prompted for it in a text box when running interactively
 (Colab/Jupyter) if it isn't already configured. Background map tiles come
-from CARTO (no API key needed) -- see CARTO_TILE_STYLE in the CONFIG
-block.
+from OpenStreetMap -- view the exported map via a real hosted URL (or a
+local static server), not by opening map.html as a local file, or tiles
+may get blocked (see the CONFIG block for details).
 
 Output: a .zip file containing map.html (and a small README), ready to
         upload to any static host (GitHub Pages, S3, Netlify, etc).
@@ -140,14 +141,14 @@ MAP_TITLE = "Postal codes map: Greater Edmonton"
 MAP_START_LOCATION = [53.5461, -113.4938]   # Edmonton, AB
 MAP_START_ZOOM = 10
 
-# Background map tiles come from CARTO (rendered from OpenStreetMap data)
-# rather than OSM's own raw tile servers -- those are volunteer-run and
-# only meant for light, single-browser-tab use; anything embedded in an
-# app/export gets blocked ("Access blocked" tiles) per their usage policy
-# (osm.wiki/Blocked). CARTO's basemaps are free for this kind of use and
-# need no API key. See https://github.com/CartoDB/basemap-styles for the
-# available styles (Folium's built-in name below, or a custom tiles= URL).
-CARTO_TILE_STYLE = "CartoDB positron"
+# Background map tiles come from OpenStreetMap's raw tile servers, which
+# are volunteer-run and require every request to properly identify itself
+# (osm.wiki/Blocked). A normal browser viewing map.html from a real hosted
+# URL already sends a Referer header identifying the page, satisfying
+# this -- but opening map.html as a local file:// path sends no Referer
+# and can get flagged as unidentified traffic. ALWAYS test/view the
+# exported map via a local static server (e.g. `python -m http.server`),
+# never by double-clicking map.html, to avoid tripping OSM's usage policy.
 
 # Background color for the sidebar's title header block.
 SIDEBAR_HEADER_BG_COLOR = "#3A4458"
@@ -677,11 +678,7 @@ def build_map(df):
     import folium
     from folium import Element
 
-    m = folium.Map(
-        location=MAP_START_LOCATION,
-        zoom_start=MAP_START_ZOOM,
-        tiles=CARTO_TILE_STYLE,
-    )
+    m = folium.Map(location=MAP_START_LOCATION, zoom_start=MAP_START_ZOOM, tiles="OpenStreetMap")
     m.get_root().html.add_child(Element(f"<title>{escape(MAP_TITLE)}</title>"))
 
     # CSS is order-independent (safe in <head>, which is where folium's own
@@ -1460,8 +1457,11 @@ def package_output(m, output_dir=OUTPUT_DIR, output_zip=OUTPUT_ZIP):
             "\n"
             "The map itself doesn't need internet access to load (the Leaflet/\n"
             "jQuery/Bootstrap/Font Awesome files are bundled locally), but the\n"
-            "background map tiles are still fetched live from CARTO, so\n"
+            "background map tiles are still fetched live from OpenStreetMap, so\n"
             "whoever views the map needs internet access for those to appear.\n"
+            "Always view it via this hosted URL (never by double-clicking\n"
+            "map.html locally) so tile requests carry a proper Referer header,\n"
+            "per OSM's tile usage policy.\n"
         )
 
     if os.path.exists(output_zip):
