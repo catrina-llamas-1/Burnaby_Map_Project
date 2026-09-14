@@ -6,7 +6,7 @@ Plots worker postal codes (British Columbia & Alberta) on an interactive
 Leaflet/Folium map, with two independent-but-combinable checkbox filters:
 
   1) Region     -> classified from a keyword column into ClaimsPro / SCM / Pario
-  2) Work Address - Line 1 -> one of three known office addresses
+  2) Work Address - Line 1 -> the known Edmonton office address
 
 ClaimsPro, SCM, and Pario all share one color (Blue) -- worker pins are
 not color-differentiated by region. Both filters can be used together
@@ -108,14 +108,13 @@ REGION_COLORS = {
 
 # Work Address - Line 1 categories to filter on. Matching is case-insensitive
 # and ignores extra whitespace, but otherwise looks for these as substrings
-# of the spreadsheet's address value (so "Suite 112, 6093 Iona Drive, Burnaby"
-# still matches "Suite 112, 6093 Iona Drive"). This is also the column name
-# matched in the spreadsheet -- COLUMN_ADDRESS_LINE1 above -- but the map's
-# own UI labels this filter with ADDRESS_FILTER_LABEL below instead.
+# of the spreadsheet's address value (so "Suite 200, 8560 Roper Road NW,
+# Edmonton" still matches "Suite 200, 8560 Roper Road NW"). This is also
+# the column name matched in the spreadsheet -- COLUMN_ADDRESS_LINE1 above
+# -- but the map's own UI labels this filter with ADDRESS_FILTER_LABEL
+# below instead.
 ADDRESS_CATEGORIES = [
-    "8333 Eastlake Drive Suite 202",
-    "1849 Welch Street",
-    "Suite 112, 6093 Iona Drive",
+    "Suite 200, 8560 Roper Road NW",
 ]
 
 # Label shown in the map's UI (filter panel heading) for the Work Address
@@ -126,9 +125,7 @@ ADDRESS_FILTER_LABEL = "Work Address"
 # Marker/line/legend color per work address, and reflected on the map for
 # the destination pins themselves.
 ADDRESS_COLORS = {
-    "8333 Eastlake Drive Suite 202": "#EF6528",
-    "1849 Welch Street": "#4DB595",
-    "Suite 112, 6093 Iona Drive": "#7D7370",
+    "Suite 200, 8560 Roper Road NW": "#EF6528",
 }
 UNKNOWN_ADDRESS_COLOR = "#555555"
 
@@ -138,8 +135,8 @@ UNKNOWN_ADDRESS_LABEL = "Other / Unmatched Address"
 UNKNOWN_COLOR = "#7e9cd1"  # Blue, matching REGION_COLORS
 
 MAP_TITLE = "Postal codes map: Greater Edmonton"
-MAP_START_LOCATION = [53.7267, -119.0]   # rough BC/AB midpoint
-MAP_START_ZOOM = 5
+MAP_START_LOCATION = [53.5461, -113.4938]   # Edmonton, AB
+MAP_START_ZOOM = 10
 
 # Background color for the sidebar's title header block.
 SIDEBAR_HEADER_BG_COLOR = "#3A4458"
