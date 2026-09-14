@@ -17,6 +17,9 @@ Usage:
     omitted, or the API key isn't available, you'll be prompted for them
     when the script runs.
 
+    In Google Colab, running the script prompts you to upload the
+    spreadsheet and downloads the result automatically when done.
+
 API key:
 Supply your Google Maps API key one of three ways (checked in this order):
     1. Set a GOOGLE_MAPS_API_KEY environment variable before running.
@@ -188,7 +191,56 @@ def _default_output_path(input_path):
     return f"{root}_geocoded{ext}"
 
 
+def _running_in_colab():
+    try:
+        import google.colab  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _running_in_notebook():
+    try:
+        from IPython import get_ipython
+
+        return get_ipython() is not None
+    except ImportError:
+        return False
+
+
+def _colab_main():
+    """Convenience entry point for Google Colab: uploads the spreadsheet,
+    runs the pipeline, and downloads the resulting .xlsx."""
+    from google.colab import files
+
+    print("Upload your .xlsx spreadsheet...")
+    uploaded = files.upload()
+    if not uploaded:
+        raise SystemExit("No file uploaded.")
+    input_path = next(iter(uploaded))
+
+    api_key = _get_api_key()
+    output_path = _default_output_path(input_path)
+    geocode_spreadsheet(input_path, output_path, api_key)
+
+    files.download(output_path)
+
+
 def main():
+    if _running_in_colab():
+        _colab_main()
+        return
+
+    if _running_in_notebook():
+        # Plain Jupyter (not Colab): sys.argv holds kernel launch args, not
+        # a file path, so ask directly instead of using argparse.
+        input_path = _prompt_for_input_path()
+        api_key = _get_api_key()
+        output_path = _default_output_path(input_path)
+        geocode_spreadsheet(input_path, output_path, api_key)
+        return
+
     parser = argparse.ArgumentParser(
         description="Geocode postal codes in the Worker's Postal column of a spreadsheet."
     )
