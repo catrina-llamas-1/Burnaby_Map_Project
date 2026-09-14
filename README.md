@@ -7,10 +7,11 @@ next to each checkbox. Output is a zip you can host as a static site.
 
 Pins are placed using the `Lat`/`Long` coordinates already present in the
 spreadsheet when available. Any row missing them (or with the columns left
-out entirely) has its pin placed automatically by converting `Worker's
-Postal` into coordinates via offline postal-code lookup (`pgeocode`,
-FSA-level accuracy — no API key or network access needed). All pins use a
-single color, configurable via `PIN_COLOR` in the `CONFIG` block.
+out entirely) has its pin placed automatically by geocoding `Worker's
+Postal` through the **Google Maps Geocoding API** (the same API key used
+for drive-time calculations; each distinct postal code is geocoded once
+and cached). All pins use a single color, configurable via `PIN_COLOR` in
+the `CONFIG` block.
 
 ## Drive times, straight-line distance & KPIs
 
@@ -32,23 +33,28 @@ each worker's pin and their work address.
   / 20 / 30 minutes, average distance (km), and the closest/farthest
   worker by drive time.
 
-## Google Maps API key (required for drive times)
+## Google Maps API key (required)
 
 You need a Google Cloud project with the **Geocoding API** and **Distance
-Matrix API** both enabled and billing set up, and an API key from it (the
-Geocoding API is used once per distinct work address; results are cached).
+Matrix API** both enabled and billing set up, and an API key from it. It's
+used for: geocoding any worker's postal code that doesn't already have a
+`Lat`/`Long` in the spreadsheet, geocoding each distinct work address once,
+and the drive-time/distance calculations. Every distinct postal code and
+work address is geocoded only once and cached.
 
 Supply the key one of three ways (checked in this order):
 1. Paste it into `GOOGLE_MAPS_API_KEY` in the `CONFIG` block at the top of
    `generate_map.py`.
 2. Set a `GOOGLE_MAPS_API_KEY` environment variable before running.
 3. Leave both blank and run interactively (Colab/Jupyter) — you'll be
-   prompted for it in a text box (masked input), and separately asked to
-   choose 7:30 AM or 4:30 PM for the departure time.
+   prompted for it in a text box (masked input) at the start of the run,
+   and separately asked to choose 7:30 AM or 4:30 PM for the departure
+   time. When run as a plain script, you'll instead be prompted on the
+   command line.
 
 If the key is missing, invalid, or either API/billing isn't enabled, the
 script fails immediately with a clear error rather than silently producing
-a map with no drive times.
+a map with no pins or no drive times.
 
 ## Run in Google Colab
 

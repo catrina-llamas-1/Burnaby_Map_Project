@@ -33,8 +33,8 @@ Input:  an .xlsx spreadsheet with (at least) these columns:
 
         Lat/Long columns are optional. If present, those coordinates are
         used as-is; any row missing them (or missing the columns entirely)
-        has its pin placed by converting Worker's Postal into coordinates
-        via offline postal-code lookup (pgeocode, FSA-level accuracy).
+        has its pin placed by geocoding Worker's Postal via the Google Maps
+        Geocoding API (the same API key used for drive-time calculations).
 
 Requires a Google Maps API key (Geocoding API + Distance Matrix API, both
 enabled with billing set up) -- see GOOGLE_MAPS_API_KEY in the CONFIG
@@ -271,45 +271,49 @@ def load_spreadsheet(path):
 # Step 2: Read pin coordinates directly from the spreadsheet
 # ---------------------------------------------------------------------------
 
-def geocode_postal_codes(df):
+def geocode_postal_codes(df, api_key):
     """Fill in latitude/longitude for any row that doesn't already have a
-    valid pair, by converting its Worker's Postal value into coordinates.
-    Uses pgeocode (offline, no API key/network needed), which resolves a
-    Canadian postal code to its FSA (first 3 characters) centroid -- the
-    finest precision available without a paid postal-code geocoding
-    service."""
+    valid pair, by geocoding its Worker's Postal value via the Google Maps
+    Geocoding API. Each distinct postal code is geocoded once and cached
+    (workers sharing a postal code reuse the same lookup)."""
     missing = df["latitude"].isna() | df["longitude"].isna()
     if not missing.any():
         return df
 
-    import pgeocode
-
-    nomi = pgeocode.Nominatim("ca")
-    fsa = (
-        df.loc[missing, COLUMN_GEOCODE_POSTAL]
-        .astype(str).str.strip().str.upper().str[:3]
+    postal_codes = (
+        df.loc[missing, COLUMN_GEOCODE_POSTAL].astype(str).str.strip().str.upper()
     )
-    looked_up = nomi.query_postal_code(fsa.tolist())
-    df.loc[missing, "latitude"] = looked_up["latitude"].to_numpy()
-    df.loc[missing, "longitude"] = looked_up["longitude"].to_numpy()
 
-    still_missing = (df["latitude"].isna() | df["longitude"].isna()) & missing
-    n = int(still_missing.sum())
-    if n:
+    coords_by_postal = {}
+    failed = []
+    for postal in sorted(postal_codes.unique()):
+        try:
+            coords_by_postal[postal] = _geocode_address_text(f"{postal}, Canada", api_key)
+        except RuntimeError:
+            failed.append(postal)
+
+    df.loc[missing, "latitude"] = postal_codes.map(
+        lambda p: coords_by_postal.get(p, (None, None))[0]
+    )
+    df.loc[missing, "longitude"] = postal_codes.map(
+        lambda p: coords_by_postal.get(p, (None, None))[1]
+    )
+
+    if failed:
         warnings.warn(
-            f"{n} row(s) could not be geocoded from {COLUMN_GEOCODE_POSTAL} "
-            f"(unrecognized postal code) and will be dropped."
+            f"{len(failed)} distinct postal code(s) could not be geocoded via "
+            f"the Google Maps Geocoding API and will be dropped: {failed}"
         )
 
     return df
 
 
-def prepare_coordinates(df):
+def prepare_coordinates(df, api_key):
     """Use the spreadsheet's own COLUMN_LAT/COLUMN_LONG values as each pin's
-    location where available, falling back to converting Worker's Postal
-    into coordinates (see geocode_postal_codes) for any row missing them.
-    Also derives a province code from the first letter of the postal code
-    to apply ALLOWED_PROVINCES."""
+    location where available, falling back to geocoding Worker's Postal via
+    the Google Maps Geocoding API (see geocode_postal_codes) for any row
+    missing them. Also derives a province code from the first letter of the
+    postal code to apply ALLOWED_PROVINCES."""
     df = df.copy()
     if COLUMN_LAT in df.columns:
         df["latitude"] = pd.to_numeric(df[COLUMN_LAT], errors="coerce")
@@ -320,7 +324,7 @@ def prepare_coordinates(df):
     else:
         df["longitude"] = pd.NA
 
-    df = geocode_postal_codes(df)
+    df = geocode_postal_codes(df, api_key)
 
     valid_range = (
         df["latitude"].between(-90, 90) & df["longitude"].between(-180, 180)
@@ -395,17 +399,16 @@ def _get_google_maps_api_key():
     if env_key:
         return env_key
 
-    if _running_in_colab() or _running_in_notebook():
-        import getpass
+    import getpass
 
-        key = getpass.getpass("Enter your Google Maps API key (Geocoding + Distance Matrix): ").strip()
-        if key:
-            return key
+    key = getpass.getpass("Enter your Google Maps API key (Geocoding + Distance Matrix): ").strip()
+    if key:
+        return key
 
     raise RuntimeError(
         "No Google Maps API key found. Set GOOGLE_MAPS_API_KEY at the top of "
         "generate_map.py, set a GOOGLE_MAPS_API_KEY environment variable, or "
-        "run this interactively (Colab/Jupyter) to be prompted for one."
+        "enter one at the prompt when running the script."
     )
 
 
@@ -1245,11 +1248,12 @@ def package_output(m, output_dir=OUTPUT_DIR, output_zip=OUTPUT_ZIP):
 # ---------------------------------------------------------------------------
 
 def generate_map_from_excel(input_path, output_zip=OUTPUT_ZIP):
+    api_key = _get_google_maps_api_key()
+
     df = load_spreadsheet(input_path)
-    df = prepare_coordinates(df)
+    df = prepare_coordinates(df, api_key)
     df = classify_rows(df)
 
-    api_key = _get_google_maps_api_key()
     departure_choice = _prompt_departure_time_choice()
     df = compute_drive_times(df, api_key, departure_choice)
 
