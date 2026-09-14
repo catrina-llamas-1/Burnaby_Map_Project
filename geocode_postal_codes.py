@@ -10,18 +10,22 @@ Requirements:
     pip install pandas openpyxl requests
 
 Usage:
-    python geocode_postal_codes.py path/to/input.xlsx [path/to/output.xlsx]
+    python geocode_postal_codes.py [path/to/input.xlsx] [path/to/output.xlsx]
 
     If no output path is given, the result is written next to the input
-    file with "_geocoded" appended to the filename.
+    file with "_geocoded" appended to the filename. If the input path is
+    omitted, or the API key isn't available, you'll be prompted for them
+    when the script runs.
 
 API key:
-Supply your Google Maps API key one of two ways (checked in this order):
+Supply your Google Maps API key one of three ways (checked in this order):
     1. Set a GOOGLE_MAPS_API_KEY environment variable before running.
     2. Paste it into GOOGLE_MAPS_API_KEY below.
+    3. Leave both blank and you'll be prompted for it (input is hidden).
 """
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -55,11 +59,28 @@ def _get_api_key():
     env_key = os.environ.get("GOOGLE_MAPS_API_KEY")
     if env_key:
         return env_key
+
+    key = getpass.getpass("Enter your Google Maps API key (input hidden): ").strip()
+    if key:
+        return key
+
     raise RuntimeError(
         "No Google Maps API key found. Set a GOOGLE_MAPS_API_KEY environment "
-        "variable, or paste your key into GOOGLE_MAPS_API_KEY at the top of "
-        "geocode_postal_codes.py."
+        "variable, paste your key into GOOGLE_MAPS_API_KEY at the top of "
+        "geocode_postal_codes.py, or enter it when prompted."
     )
+
+
+def _prompt_for_input_path():
+    while True:
+        path = input("Enter the path to the input spreadsheet (.xlsx): ").strip().strip('"')
+        if not path:
+            print("Please enter a file path.")
+            continue
+        if not os.path.exists(path):
+            print(f"File not found: {path}")
+            continue
+        return path
 
 
 def _normalize_column_name(name):
@@ -171,7 +192,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Geocode postal codes in the Worker's Postal column of a spreadsheet."
     )
-    parser.add_argument("input", help="Path to the input .xlsx spreadsheet")
+    parser.add_argument(
+        "input", nargs="?", default=None, help="Path to the input .xlsx spreadsheet"
+    )
     parser.add_argument(
         "output",
         nargs="?",
@@ -180,14 +203,17 @@ def main():
     )
     args = parser.parse_args()
 
-    if not os.path.exists(args.input):
-        print(f"Error: input file not found: {args.input}")
+    input_path = args.input
+    if input_path is None:
+        input_path = _prompt_for_input_path()
+    elif not os.path.exists(input_path):
+        print(f"Error: input file not found: {input_path}")
         sys.exit(1)
 
-    output_path = args.output or _default_output_path(args.input)
+    output_path = args.output or _default_output_path(input_path)
     api_key = _get_api_key()
 
-    geocode_spreadsheet(args.input, output_path, api_key)
+    geocode_spreadsheet(input_path, output_path, api_key)
 
 
 if __name__ == "__main__":
