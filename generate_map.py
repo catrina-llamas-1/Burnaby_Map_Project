@@ -39,8 +39,12 @@ Input:  an .xlsx spreadsheet with (at least) these columns:
 
 Requires a Google Maps API key (Geocoding API + Distance Matrix API, both
 enabled with billing set up) -- see GOOGLE_MAPS_API_KEY in the CONFIG
-block. You'll be prompted for it in a text box when running interactively
-(Colab/Jupyter) if it isn't already configured.
+block -- and a Stadia Maps API key for the background map tiles -- see
+STADIA_MAPS_API_KEY in the CONFIG block. You'll be prompted for either in
+a text box when running interactively (Colab/Jupyter) if not already
+configured. Note the Stadia Maps key ends up embedded in the exported
+map.html (it's used client-side to fetch tiles), so use a key you're okay
+having visible to anyone who views the page source.
 
 Output: a .zip file containing map.html (and a small README), ready to
         upload to any static host (GitHub Pages, S3, Netlify, etc).
@@ -137,6 +141,27 @@ UNKNOWN_COLOR = "#7e9cd1"  # Blue, matching REGION_COLORS
 MAP_TITLE = "Postal codes map: Greater Edmonton"
 MAP_START_LOCATION = [53.5461, -113.4938]   # Edmonton, AB
 MAP_START_ZOOM = 10
+
+# Background map tiles come from Stadia Maps (rendered from OpenStreetMap
+# data) rather than OSM's own raw tile servers -- those are volunteer-run
+# and only meant for light, single-browser-tab use; anything embedded in
+# an app/export gets blocked ("Access blocked" tiles) per their usage
+# policy (osm.wiki/Blocked). Stadia Maps' free tier covers this use case
+# with a proper API key. Get one at https://stadiamaps.com/ (Client API
+# key, not needed to be domain-restricted for a locally-viewed export).
+#
+# Supply the key one of three ways (checked in this order), so you never
+# have to commit a real key into this file:
+#   1. Paste it here, e.g. STADIA_MAPS_API_KEY = "..."
+#   2. Set the STADIA_MAPS_API_KEY environment variable before running.
+#   3. Leave both blank and run interactively (Colab/Jupyter) -- you'll be
+#      prompted for it in a text box (masked input).
+STADIA_MAPS_API_KEY = ""
+
+# Stadia Maps basemap style. "alidade_smooth" is a clean, OSM-familiar
+# look; see https://docs.stadiamaps.com/themes/ for other options
+# (e.g. "osm_bright", "alidade_smooth_dark").
+STADIA_MAPS_STYLE = "alidade_smooth"
 
 # Background color for the sidebar's title header block.
 SIDEBAR_HEADER_BG_COLOR = "#3A4458"
@@ -410,6 +435,29 @@ def _get_google_maps_api_key():
     )
 
 
+def _get_stadia_maps_api_key():
+    if STADIA_MAPS_API_KEY:
+        return STADIA_MAPS_API_KEY
+
+    env_key = os.environ.get("STADIA_MAPS_API_KEY")
+    if env_key:
+        return env_key
+
+    if _running_in_colab() or _running_in_notebook():
+        import getpass
+
+        key = getpass.getpass("Enter your Stadia Maps API key (background map tiles): ").strip()
+        if key:
+            return key
+
+    raise RuntimeError(
+        "No Stadia Maps API key found. Set STADIA_MAPS_API_KEY at the top of "
+        "generate_map.py, set a STADIA_MAPS_API_KEY environment variable, or "
+        "run this interactively (Colab/Jupyter) to be prompted for one. Get a "
+        "free key at https://stadiamaps.com/."
+    )
+
+
 def _load_timezone(tz_name):
     try:
         return ZoneInfo(tz_name)
@@ -661,11 +709,25 @@ def build_popup_html(row):
 # Step 6: Build the Folium map with combinable Region / Address checkboxes
 # ---------------------------------------------------------------------------
 
-def build_map(df):
+def build_map(df, stadia_api_key):
     import folium
     from folium import Element
 
-    m = folium.Map(location=MAP_START_LOCATION, zoom_start=MAP_START_ZOOM, tiles="OpenStreetMap")
+    m = folium.Map(location=MAP_START_LOCATION, zoom_start=MAP_START_ZOOM, tiles=None)
+    folium.TileLayer(
+        tiles=(
+            f"https://tiles.stadiamaps.com/tiles/{STADIA_MAPS_STYLE}/"
+            f"{{z}}/{{x}}/{{y}}{{r}}.png?api_key={stadia_api_key}"
+        ),
+        attr=(
+            '&copy; <a href="https://stadiamaps.com/" target="_blank">Stadia Maps</a> '
+            '&copy; <a href="https://openmaptiles.org/" target="_blank">OpenMapTiles</a> '
+            '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">'
+            "OpenStreetMap</a> contributors"
+        ),
+        name="Stadia Maps",
+        max_zoom=20,
+    ).add_to(m)
     m.get_root().html.add_child(Element(f"<title>{escape(MAP_TITLE)}</title>"))
 
     # CSS is order-independent (safe in <head>, which is where folium's own
@@ -1444,7 +1506,7 @@ def package_output(m, output_dir=OUTPUT_DIR, output_zip=OUTPUT_ZIP):
             "\n"
             "The map itself doesn't need internet access to load (the Leaflet/\n"
             "jQuery/Bootstrap/Font Awesome files are bundled locally), but the\n"
-            "background map tiles are still fetched live from OpenStreetMap, so\n"
+            "background map tiles are still fetched live from Stadia Maps, so\n"
             "whoever views the map needs internet access for those to appear.\n"
         )
 
@@ -1472,7 +1534,8 @@ def generate_map_from_excel(input_path, output_zip=OUTPUT_ZIP):
     api_key = _get_google_maps_api_key()
     df = compute_drive_times(df, api_key)
 
-    m = build_map(df)
+    stadia_api_key = _get_stadia_maps_api_key()
+    m = build_map(df, stadia_api_key)
     zip_path = package_output(m, output_zip=output_zip)
     print(f"Done. {len(df)} pins plotted. Output written to: {zip_path}")
     return zip_path
