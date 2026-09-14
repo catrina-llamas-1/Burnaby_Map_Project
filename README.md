@@ -46,6 +46,22 @@ If the key is missing, invalid, or either API/billing isn't enabled, the
 script fails immediately with a clear error rather than silently producing
 a map with no drive times.
 
+## Background map tiles
+
+Background map tiles come from OpenStreetMap's own tile servers, which
+are volunteer-run and require every request to properly identify itself
+(see [OSM's tile usage policy](https://operations.osmfoundation.org/policies/tiles/)).
+A normal browser viewing the exported map from a real hosted URL already
+sends a `Referer` header identifying the page, which satisfies this — but
+opening `map.html` as a local `file://` path sends no `Referer` and can
+get flagged as unidentified/bulk traffic, resulting in "Access blocked"
+tiles.
+
+**Always view/test the exported map via a real URL** — either the static
+host it's deployed to, or a local static server for testing
+(`python -m http.server` from inside the unzipped output, then visit
+`http://localhost:8000/`) — never by double-clicking `map.html` directly.
+
 ## Run in Google Colab
 
 1. Upload `generate_map.py` to your Colab session (or paste its contents into a cell).
@@ -95,7 +111,8 @@ title/start location) lives in the `CONFIG` block at the top of
 so the map doesn't depend on any CDN being reachable when someone opens it
 later. Upload `map.html`, `index.html`, and `assets/` together, keeping
 their relative layout, to any static host (GitHub Pages, S3, Netlify, etc.).
-Background map tiles are still fetched live from OpenStreetMap, so viewers
-need internet access for those to load — same as any web map. Drive times
+Background map tiles are still fetched live from OpenStreetMap, so
+viewers need internet access for those to load (see "Background map
+tiles" above for the Referer/hosting caveat). Drive times
 and distances are computed once when you run the script and baked into the
 page; the deployed map does not call the Google Maps API itself.
