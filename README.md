@@ -46,24 +46,15 @@ If the key is missing, invalid, or either API/billing isn't enabled, the
 script fails immediately with a clear error rather than silently producing
 a map with no drive times.
 
-## Stadia Maps API key (required for background map tiles)
+## Background map tiles
 
-Background map tiles come from Stadia Maps (rendered from OpenStreetMap
-data) instead of OSM's own raw tile servers, which are volunteer-run and
-only meant for light, single-browser-tab use — anything embedded in an
-app or a hosted export gets blocked ("Access blocked" tiles) under their
-usage policy. Get a free key at https://stadiamaps.com/.
-
-Supply the key the same three ways as the Google Maps key:
-1. Paste it into `STADIA_MAPS_API_KEY` in the `CONFIG` block at the top of
-   `generate_map.py`.
-2. Set a `STADIA_MAPS_API_KEY` environment variable before running.
-3. Leave both blank and run interactively (Colab/Jupyter) — you'll be
-   prompted for it in a text box (masked input).
-
-This key is embedded in the exported `map.html` (it's used client-side to
-fetch tiles), so anyone who views the page source can see it — use a key
-you're comfortable having visible that way.
+Background map tiles come from CARTO (rendered from OpenStreetMap data)
+instead of OSM's own raw tile servers, which are volunteer-run and only
+meant for light, single-browser-tab use — anything embedded in an app or
+a hosted export gets blocked ("Access blocked" tiles) under their usage
+policy. CARTO's basemaps are free for this kind of use and need no API
+key. The style is set via `CARTO_TILE_STYLE` in the `CONFIG` block at the
+top of `generate_map.py` (default: `"CartoDB positron"`).
 
 ## Run in Google Colab
 
@@ -114,7 +105,7 @@ title/start location) lives in the `CONFIG` block at the top of
 so the map doesn't depend on any CDN being reachable when someone opens it
 later. Upload `map.html`, `index.html`, and `assets/` together, keeping
 their relative layout, to any static host (GitHub Pages, S3, Netlify, etc.).
-Background map tiles are still fetched live from Stadia Maps, so viewers
+Background map tiles are still fetched live from CARTO, so viewers
 need internet access for those to load — same as any web map. Drive times
 and distances are computed once when you run the script and baked into the
 page; the deployed map does not call the Google Maps API itself.
