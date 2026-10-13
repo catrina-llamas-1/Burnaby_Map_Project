@@ -3,7 +3,8 @@
 Generates an interactive HTML map of worker postal codes (BC & Alberta),
 filterable by **Region** (ClaimsPro / SCM / Pario) and **Work Address - Line 1**,
 usable together or independently. The Region filter shows a color legend
-next to each checkbox. Output is a zip you can host as a static site.
+next to each checkbox. Output is a static site, ready to deploy to
+Firebase Hosting (or any other static host).
 
 Pins are placed using the `Lat`/`Long` coordinates already present in the
 spreadsheet — no geocoding needed to plot them.
@@ -105,14 +106,41 @@ title/start location) lives in the `CONFIG` block at the top of
 
 ## Output
 
-`postal_code_map_output.zip` containing `map.html` (duplicated as
-`index.html`, since most static hosts serve that at the site root) and an
-`assets/` folder with Leaflet/jQuery/Bootstrap/Font Awesome bundled locally,
-so the map doesn't depend on any CDN being reachable when someone opens it
-later. Upload `map.html`, `index.html`, and `assets/` together, keeping
-their relative layout, to any static host (GitHub Pages, S3, Netlify, etc.).
-Background map tiles are still fetched live from OpenStreetMap, so
-viewers need internet access for those to load (see "Background map
-tiles" above for the Referer/hosting caveat). Drive times
-and distances are computed once when you run the script and baked into the
-page; the deployed map does not call the Google Maps API itself.
+`postal_code_map_output/` (and the equivalent `postal_code_map_output.zip`)
+containing `map.html` (duplicated as `index.html`, since most static hosts
+serve that at the site root) and an `assets/` folder with Leaflet/jQuery/
+Bootstrap/Font Awesome bundled locally, so the map doesn't depend on any
+CDN being reachable when someone opens it later. Background map tiles are
+still fetched live from OpenStreetMap, so viewers need internet access for
+those to load (see "Background map tiles" above for the Referer/hosting
+caveat). Drive times and distances are computed once when you run the
+script and baked into the page; the deployed map does not call the Google
+Maps API itself.
+
+Both are gitignored by default, since the output can contain real
+employee postal codes/addresses — don't commit it to a public repo.
+
+## Deploying to Firebase Hosting
+
+`firebase.json` in this repo points Firebase Hosting's public directory at
+`postal_code_map_output/`, the generator's default output folder.
+
+1. Run `generate_map.py` to produce `postal_code_map_output/`.
+2. Install the Firebase CLI if you haven't: `npm install -g firebase-tools`.
+3. From the repo root: `firebase login`, then `firebase deploy`. The first
+   run prompts you to select/link your Firebase project (`firebase use
+   --add`) if `.firebaserc` isn't already set up for this repo.
+
+If your Firebase project already has GitHub-connected auto-deploys set up
+(via `firebase init hosting:github`, or configured directly in the Firebase
+console), it deploys `postal_code_map_output/` automatically on push/merge
+to whichever branch it watches — just make sure that folder is populated
+(generated and, if your workflow doesn't rebuild it in CI, committed) on
+that branch before pushing. This repo doesn't commit any GitHub Actions
+workflow files itself, since that step depends on your existing Firebase
+project configuration.
+
+The output is still a portable static site, so any other static host
+(GitHub Pages, S3, Netlify, etc.) works too if you'd rather use one of
+those instead — just upload `map.html`, `index.html`, and `assets/`
+together, keeping their relative layout.
