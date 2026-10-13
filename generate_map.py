@@ -101,13 +101,17 @@ REGION_KEYWORDS = {
     "XYZ Company": ["xyz"],
 }
 
-# Marker color per region. All regions share one "Blue" -- worker
-# pins are no longer color-differentiated by region.
+# Marker color per region.
 REGION_COLORS = {
     "ABC Company": "#7e9cd1",  # Blue
-    "123 Company": "#7e9cd1",  # Blue
-    "XYZ Company": "#7e9cd1",  # Blue
+    "123 Company": "#4db595",  # Green
+    "XYZ Company": "#3a4458",  # Dark slate
 }
+
+# Label shown in the map's UI (filter panel heading, popups, tooltips) for
+# the Region filter. Purely cosmetic -- COLUMN_REGION (the spreadsheet
+# column name being matched) is unaffected.
+REGION_FILTER_LABEL = "Company Name"
 
 # Work Address - Line 1 categories to filter on. Matching is case-insensitive
 # and ignores extra whitespace, but otherwise looks for these as substrings
@@ -662,7 +666,7 @@ def build_popup_html(row):
 
     return (
         f"<b>Worker's Postal:</b> {escape(str(row[COLUMN_GEOCODE_POSTAL]))}<br>"
-        f"<b>Region:</b> {escape(str(row['region_category']))}<br>"
+        f"<b>{escape(REGION_FILTER_LABEL)}:</b> {escape(str(row['region_category']))}<br>"
         f"<b>Address:</b> {escape(address_line)}<br>"
         f"<b>{escape(am_label)} (Home → Work):</b> {escape(drive_line('AM'))}<br>"
         f"<b>{escape(pm_label)} (Work → Home):</b> {escape(drive_line('PM'))}"
@@ -909,7 +913,7 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
         <div style="font-weight:bold; margin-top:10px;">Pin Display</div>
         {pin_display_radios_html}
 
-        <div style="font-weight:bold; margin-top:10px;">Region</div>
+        <div style="font-weight:bold; margin-top:10px;">{escape(REGION_FILTER_LABEL)}</div>
         {checkbox_html("region", region_labels, color_map=region_colors)}
         <button id="region-select-all" style="margin-top:4px;">All</button>
         <button id="region-select-none">None</button>
@@ -1106,7 +1110,7 @@ def _add_controls(m, marker_meta, region_labels, address_labels, dest_markers):
           row.style.padding = '4px 8px 4px 22px';
           row.style.margin = '2px 0';
           row.style.borderRadius = '4px';
-          row.title = 'Region: ' + info.region + ' | ' + info.address;
+          row.title = {json.dumps(REGION_FILTER_LABEL)} + ': ' + info.region + ' | ' + info.address;
           row.addEventListener('mouseenter', function() {{ row.style.background = '#eef3fb'; }});
           row.addEventListener('mouseleave', function() {{ row.style.background = ''; }});
 
