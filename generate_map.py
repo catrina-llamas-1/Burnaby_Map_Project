@@ -5,11 +5,11 @@ Postal Code Map Generator
 Plots worker postal codes (British Columbia & Alberta) on an interactive
 Leaflet/Folium map, with two independent-but-combinable checkbox filters:
 
-  1) Region     -> classified from a keyword column into ClaimsPro / SCM / Pario
-  2) Work Address - Line 1 -> the known Edmonton office address
+  1) Region     -> classified from a keyword column into ABC Company / 123 Company / XYZ Company
+  2) Work Address - Line 1 -> the known office address
 
-ClaimsPro, SCM, and Pario all share one color (Blue) -- worker pins are
-not color-differentiated by region. Both filters can be used together
+ABC Company, 123 Company, and XYZ Company all share one color (Blue) --
+worker pins are not color-differentiated by region. Both filters can be used together
 (AND logic) or on their own.
 
 Each worker is also connected to their classified Work Address by a
@@ -96,28 +96,27 @@ PROVINCE_BY_POSTAL_PREFIX = {
 # substring match) inside COLUMN_REGION. First match wins; order matters if a
 # row's text could match more than one.
 REGION_KEYWORDS = {
-    "ClaimsPro": ["claimspro"],
-    "SCM": ["scm"],
-    "Pario": ["pario"],
+    "ABC Company": ["abc company"],
+    "123 Company": ["123 company"],
+    "XYZ Company": ["xyz company"],
 }
 
-# Marker color per region. All regions share ClaimsPro's "Blue" -- worker
+# Marker color per region. All regions share one "Blue" -- worker
 # pins are no longer color-differentiated by region.
 REGION_COLORS = {
-    "ClaimsPro": "#7e9cd1",  # Blue
-    "SCM": "#7e9cd1",        # Blue
-    "Pario": "#7e9cd1",      # Blue
+    "ABC Company": "#7e9cd1",  # Blue
+    "123 Company": "#7e9cd1",  # Blue
+    "XYZ Company": "#7e9cd1",  # Blue
 }
 
 # Work Address - Line 1 categories to filter on. Matching is case-insensitive
 # and ignores extra whitespace, but otherwise looks for these as substrings
-# of the spreadsheet's address value (so "Suite 200, 8560 Roper Road NW,
-# Edmonton" still matches "Suite 200, 8560 Roper Road NW"). This is also
-# the column name matched in the spreadsheet -- COLUMN_ADDRESS_LINE1 above
-# -- but the map's own UI labels this filter with ADDRESS_FILTER_LABEL
-# below instead.
+# of the spreadsheet's address value (so "10111 104 Ave NW, Edmonton" still
+# matches "10111 104 Ave NW"). This is also the column name matched in the
+# spreadsheet -- COLUMN_ADDRESS_LINE1 above -- but the map's own UI labels
+# this filter with ADDRESS_FILTER_LABEL below instead.
 ADDRESS_CATEGORIES = [
-    "Suite 200, 8560 Roper Road NW",
+    "10111 104 Ave NW",
 ]
 
 # Label shown in the map's UI (filter panel heading) for the Work Address
@@ -128,7 +127,7 @@ ADDRESS_FILTER_LABEL = "Work Address"
 # Marker/line/legend color per work address, and reflected on the map for
 # the destination pins themselves.
 ADDRESS_COLORS = {
-    "Suite 200, 8560 Roper Road NW": "#EF6528",
+    "10111 104 Ave NW": "#EF6528",
 }
 UNKNOWN_ADDRESS_COLOR = "#555555"
 

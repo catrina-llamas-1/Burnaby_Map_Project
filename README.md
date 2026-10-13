@@ -1,7 +1,7 @@
 # Worker Postal Code Map
 
 Generates an interactive HTML map of worker postal codes (BC & Alberta),
-filterable by **Region** (ClaimsPro / SCM / Pario) and **Work Address - Line 1**,
+filterable by **Region** (ABC Company / 123 Company / XYZ Company) and **Work Address - Line 1**,
 usable together or independently. The Region filter shows a color legend
 next to each checkbox. Output is a static site, ready to deploy to
 Firebase Hosting (or any other static host).
@@ -92,7 +92,7 @@ python generate_map.py path/to/spreadsheet.xlsx
   letter is also used to determine province for the BC/AB filter and for
   picking the right timezone for drive-time calculations)
 - `Lat`, `Long` — coordinates used to place the pin directly
-- `Region` — free text; scanned for keywords (`ClaimsPro`, `SCM`, `Pario`)
+- `Region` — free text; scanned for keywords (`ABC Company`, `123 Company`, `XYZ Company`)
 - `Work Address - Line 1`
 - `City`
 - `Postal or ZIP code` — display-only, shown in the popup
