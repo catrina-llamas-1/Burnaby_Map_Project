@@ -96,9 +96,9 @@ PROVINCE_BY_POSTAL_PREFIX = {
 # substring match) inside COLUMN_REGION. First match wins; order matters if a
 # row's text could match more than one.
 REGION_KEYWORDS = {
-    "ABC Company": ["abc company"],
-    "123 Company": ["123 company"],
-    "XYZ Company": ["xyz company"],
+    "ABC Company": ["abc"],
+    "123 Company": ["123"],
+    "XYZ Company": ["xyz"],
 }
 
 # Marker color per region. All regions share one "Blue" -- worker
