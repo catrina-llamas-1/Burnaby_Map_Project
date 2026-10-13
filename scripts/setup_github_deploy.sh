@@ -1,24 +1,21 @@
 #!/usr/bin/env bash
-# One-time setup: lets THIS repo's GitHub Actions deploy to the SAME Firebase
-# project as catrina-llamas-1/Companies-amenities-map, reusing its existing
-# github-deploy service account and workload identity pool (Workload Identity
-# Federation -- no stored key). Adds a SEPARATE OIDC provider scoped to this
-# repo, so it doesn't touch or collide with the provider already trusting
-# Companies-amenities-map.
+# One-time setup: lets THIS repo's GitHub Actions deploy to its own,
+# dedicated Firebase project (fir-map-d3936) without a stored key
+# (Workload Identity Federation). Creates its own service account --
+# this project is NOT shared with catrina-llamas-1/Companies-amenities-map.
 #
 # Run it in Google Cloud Shell (https://shell.cloud.google.com), signed in as an
-# owner of the Firebase project:
+# owner of the fir-map-d3936 Firebase project:
 #   git clone https://github.com/catrina-llamas-1/Burnaby_Map_Project.git map-setup
 #   bash ~/map-setup/scripts/setup_github_deploy.sh
 #
 # At the end it prints two values to add as GitHub repository variables, plus
-# a reminder about the GOOGLE_MAPS_API_KEY secret this repo also needs (the
-# other repo doesn't, since it makes no Google Maps API calls).
+# a reminder about the GOOGLE_MAPS_API_KEY secret.
 # Safe to run again: anything that already exists is reused.
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-stony-plain-rd-companies-map}"
+PROJECT_ID="${PROJECT_ID:-fir-map-d3936}"
 REPO="${REPO:-catrina-llamas-1/Burnaby_Map_Project}"
 SA_NAME="github-deploy"
 POOL="github"
@@ -35,11 +32,16 @@ gcloud services enable iam.googleapis.com iamcredentials.googleapis.com sts.goog
 
 echo "== Service account ${SA}"
 if ! gcloud iam service-accounts describe "${SA}" >/dev/null 2>&1; then
-  echo "ERROR: ${SA} doesn't exist yet. Run Companies-amenities-map's"
-  echo "scripts/setup_github_deploy.sh first (or create it manually) --"
-  echo "this script reuses that service account rather than creating its own."
-  exit 1
+  gcloud iam service-accounts create "${SA_NAME}" --display-name="GitHub Actions deploy"
 fi
+
+echo "== Granting deploy roles"
+for role in roles/firebasehosting.admin roles/run.viewer \
+            roles/serviceusage.apiKeysViewer roles/serviceusage.serviceUsageConsumer; do
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SA}" --role="${role}" --condition=None >/dev/null
+  echo "   ${role}"
+done
 
 # New pools and providers take a little while to become visible; retry until they are.
 wait_for() {
@@ -90,10 +92,8 @@ Done. Now add these two repository VARIABLES in GitHub
   Name:  GCP_SERVICE_ACCOUNT
   Value: ${SA}
 
-This repo also needs a GOOGLE_MAPS_API_KEY secret (Secrets tab, not
-Variables -- it's sensitive): a Google Maps Platform API key with the
-Geocoding API and Distance Matrix API enabled and billing set up. The
-other repo doesn't need this; this map computes drive times, that one
-doesn't.
+Also add a GOOGLE_MAPS_API_KEY secret (Secrets tab, not Variables -- it's
+sensitive): a Google Maps Platform API key with the Geocoding API and
+Distance Matrix API enabled and billing set up.
 
 EOF

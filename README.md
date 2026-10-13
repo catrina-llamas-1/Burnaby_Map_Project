@@ -122,18 +122,18 @@ employee postal codes/addresses — don't commit it to a public repo.
 
 ## Deploying to Firebase Hosting
 
-This mirrors the setup used by `catrina-llamas-1/Companies-amenities-map`
-(same Firebase project, same deploy pattern): upload a spreadsheet to the
-repo, push, and GitHub Actions builds and deploys automatically. No
-stored service-account key — auth uses Workload Identity Federation.
+This follows the same deploy *pattern* as
+`catrina-llamas-1/Companies-amenities-map` (upload a spreadsheet to the
+repo, push, and GitHub Actions builds and deploys automatically — no
+stored service-account key, auth uses Workload Identity Federation), but
+uses its own **dedicated Firebase project**, `fir-map-d3936`, rather than
+sharing that repo's project.
 
 - `firebase.json` points Firebase Hosting's public directory at
   `postal_code_map_output/`, the generator's default output folder.
-- `.firebaserc` links this repo to the `stony-plain-rd-companies-map`
-  Firebase project (shared with Companies-amenities-map), but deploys to
-  its own Hosting **site**, `commuter-analysis-map-demo`, via the
-  `burnaby-map` target — not that project's default site, which
-  Companies-amenities-map already occupies. Live at
+- `.firebaserc` links this repo to the `fir-map-d3936` Firebase project
+  and deploys to its `commuter-analysis-map-demo` Hosting site via the
+  `burnaby-map` target. Live at
   <https://commuter-analysis-map-demo.web.app>.
 - `data/` holds the one input spreadsheet — see `data/README.md`. Upload
   a new one there (GitHub web UI: **Add file → Upload files**) to update
@@ -155,11 +155,9 @@ code changes) don't burn API calls.
 1. **GCP Workload Identity Federation**: run
    `scripts/setup_github_deploy.sh` once, in [Google Cloud
    Shell](https://shell.cloud.google.com), signed in as an owner of the
-   `stony-plain-rd-companies-map` Firebase project. It reuses that
-   project's existing `github-deploy` service account (created for
-   Companies-amenities-map) and adds a second OIDC provider trusting only
-   this repo, so it doesn't touch or collide with that repo's existing
-   access. It prints two values at the end.
+   `fir-map-d3936` Firebase project. It creates its own `github-deploy`
+   service account (not shared with any other repo) and an OIDC provider
+   trusting only this repo. It prints two values at the end.
 2. Add those as **repository variables** (not secrets) in
    `catrina-llamas-1/Burnaby_Map_Project` → Settings → Secrets and
    variables → Actions → Variables tab:
@@ -167,9 +165,7 @@ code changes) don't burn API calls.
    - `GCP_SERVICE_ACCOUNT`
 3. Add a **repository secret** (Secrets tab — this one's sensitive) named
    `GOOGLE_MAPS_API_KEY`: a Google Maps Platform key with the Geocoding
-   API and Distance Matrix API enabled and billing set up. Unlike
-   Companies-amenities-map, this project computes drive times and needs
-   its own key.
+   API and Distance Matrix API enabled and billing set up.
 
 Until both are set, pushes to `data/` still build the map (so you can
 verify `build_for_deploy.py` works) but skip the deploy step with a

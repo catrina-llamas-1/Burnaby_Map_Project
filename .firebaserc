@@ -1,9 +1,9 @@
 {
   "projects": {
-    "default": "stony-plain-rd-companies-map"
+    "default": "fir-map-d3936"
   },
   "targets": {
-    "stony-plain-rd-companies-map": {
+    "fir-map-d3936": {
       "hosting": {
         "burnaby-map": ["commuter-analysis-map-demo"]
       }
