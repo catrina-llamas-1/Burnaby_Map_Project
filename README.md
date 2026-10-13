@@ -122,23 +122,45 @@ employee postal codes/addresses — don't commit it to a public repo.
 
 ## Deploying to Firebase Hosting
 
-`firebase.json` in this repo points Firebase Hosting's public directory at
+`firebase.json` points Firebase Hosting's public directory at
 `postal_code_map_output/`, the generator's default output folder.
+`.firebaserc` links this repo to the `stony-plain-rd-companies-map`
+Firebase project.
+
+### Manual deploy
 
 1. Run `generate_map.py` to produce `postal_code_map_output/`.
 2. Install the Firebase CLI if you haven't: `npm install -g firebase-tools`.
-3. From the repo root: `firebase login`, then `firebase deploy`. The first
-   run prompts you to select/link your Firebase project (`firebase use
-   --add`) if `.firebaserc` isn't already set up for this repo.
+3. From the repo root: `firebase login`, then `firebase deploy`.
 
-If your Firebase project already has GitHub-connected auto-deploys set up
-(via `firebase init hosting:github`, or configured directly in the Firebase
-console), it deploys `postal_code_map_output/` automatically on push/merge
-to whichever branch it watches — just make sure that folder is populated
-(generated and, if your workflow doesn't rebuild it in CI, committed) on
-that branch before pushing. This repo doesn't commit any GitHub Actions
-workflow files itself, since that step depends on your existing Firebase
-project configuration.
+### Automatic deploy on push (GitHub Actions)
+
+`.github/workflows/firebase-hosting-merge.yml` deploys on every push to
+`feature/firebase-hosting`, using the `github-deploy@stony-plain-rd-
+companies-map.iam.gserviceaccount.com` service account. Two things have
+to be true for it to actually run successfully:
+
+1. **The service account key must exist as a secret in *this* GitHub
+   repo** (`catrina-llamas-1/Burnaby_Map_Project` → Settings → Secrets
+   and variables → Actions), named
+   `FIREBASE_SERVICE_ACCOUNT_STONY_PLAIN_RD_COMPANIES_MAP`. Even if this
+   Firebase project already deploys from another repo, GitHub secrets are
+   per-repo and don't carry over — this repo needs its own copy of that
+   key. Get it from Firebase Console → Project settings → Service
+   accounts → Generate new private key (or reuse the existing
+   `github-deploy@...` key if you still have it saved from the original
+   setup), then paste the full JSON as the secret's value.
+2. **`postal_code_map_output/` must actually be committed** on the branch
+   you push, since this workflow has no build step (it's a Python script,
+   not an npm app, so CI can't regenerate the map itself without your
+   Google Maps API key and input spreadsheet). Run `generate_map.py`
+   locally, then `git add -f postal_code_map_output` (it's gitignored by
+   default) before committing and pushing — **only do this if you're
+   comfortable with that data being in this repo's history**, since the
+   output can contain real employee postal codes/addresses. If this repo
+   is public, don't commit it this way; use the manual `firebase deploy`
+   path instead, or adapt the workflow to pull the spreadsheet and API key
+   from secrets and run the generator in CI.
 
 The output is still a portable static site, so any other static host
 (GitHub Pages, S3, Netlify, etc.) works too if you'd rather use one of
