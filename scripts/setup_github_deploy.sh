@@ -30,20 +30,8 @@ echo "== Enabling APIs"
 gcloud services enable iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
   firebasehosting.googleapis.com cloudresourcemanager.googleapis.com
 
-echo "== Service account ${SA}"
-if ! gcloud iam service-accounts describe "${SA}" >/dev/null 2>&1; then
-  gcloud iam service-accounts create "${SA_NAME}" --display-name="GitHub Actions deploy"
-fi
-
-echo "== Granting deploy roles"
-for role in roles/firebasehosting.admin roles/run.viewer \
-            roles/serviceusage.apiKeysViewer roles/serviceusage.serviceUsageConsumer; do
-  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-    --member="serviceAccount:${SA}" --role="${role}" --condition=None >/dev/null
-  echo "   ${role}"
-done
-
-# New pools and providers take a little while to become visible; retry until they are.
+# Newly created resources take a little while to become visible/usable
+# elsewhere; retry until they are.
 wait_for() {
   local what="$1"; shift
   for _ in $(seq 1 30); do
@@ -54,6 +42,20 @@ wait_for() {
   echo "ERROR: ${what} still not available after 2.5 minutes; run this script again." >&2
   exit 1
 }
+
+echo "== Service account ${SA}"
+if ! gcloud iam service-accounts describe "${SA}" >/dev/null 2>&1; then
+  gcloud iam service-accounts create "${SA_NAME}" --display-name="GitHub Actions deploy"
+fi
+wait_for "service account ${SA}" gcloud iam service-accounts describe "${SA}"
+
+echo "== Granting deploy roles"
+for role in roles/firebasehosting.admin roles/run.viewer \
+            roles/serviceusage.apiKeysViewer roles/serviceusage.serviceUsageConsumer; do
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SA}" --role="${role}" --condition=None >/dev/null
+  echo "   ${role}"
+done
 
 echo "== Workload identity pool '${POOL}'"
 if ! gcloud iam workload-identity-pools describe "${POOL}" --location=global >/dev/null 2>&1; then
