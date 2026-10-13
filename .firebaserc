@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "fir-map-d3936"
+  },
+  "targets": {
+    "fir-map-d3936": {
+      "hosting": {
+        "burnaby-map": ["commuter-analysis-map-demo"]
+      }
+    }
+  }
+}

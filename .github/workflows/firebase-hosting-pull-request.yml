@@ -1,0 +1,77 @@
+# Builds the map on pull requests that touch data/ and, once Firebase is set
+# up, deploys a 7-day preview channel and comments its link on the PR. Signs
+# in to Google Cloud without a key (Workload Identity Federation); see
+# scripts/setup_github_deploy.sh.
+#
+# Only triggers on changes under data/ (not every PR), since each build
+# calls the paid Google Geocoding/Distance Matrix APIs.
+name: Firebase preview
+
+on:
+  pull_request:
+    paths:
+      - "data/**"
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  build_and_preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build map data from the spreadsheet
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          pip install -r requirements.txt
+          python build_for_deploy.py
+
+      - name: Check Firebase setup
+        id: firebase
+        env:
+          PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          project=$(python -c "import json; print(json.load(open('.firebaserc'))['projects']['default'])")
+          if [ -z "$PROVIDER" ] || [ -z "$SERVICE_ACCOUNT" ] || [ "$project" = "your-firebase-project-id" ]; then
+            echo "::notice::Firebase is not set up yet (see README), so no preview was deployed."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "project=$project" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: google-github-actions/auth@v2
+        if: steps.firebase.outputs.ready == 'true'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy preview channel
+        if: steps.firebase.outputs.ready == 'true'
+        env:
+          PROJECT: ${{ steps.firebase.outputs.project }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          npx --yes firebase-tools@15 hosting:channel:deploy "pr-$PR" --expires 7d \
+            --only hosting:burnaby-map \
+            --no-authorized-domains --project "$PROJECT" --json | tee deploy.json
+          url=$(grep -o '"url": *"https://[^"]*"' deploy.json | head -1 | grep -o 'https://[^"]*')
+          if [ -z "$url" ]; then
+            echo "::error::Preview deployed but no URL found in the Firebase output."
+            exit 1
+          fi
+          echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR" --edit-last --create-if-none \
+            --body "🗺️ Map preview for this PR (expires in 7 days): $url"

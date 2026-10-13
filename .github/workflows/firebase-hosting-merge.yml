@@ -1,0 +1,68 @@
+# Builds the map from the worker spreadsheet in data/ and deploys it to
+# Firebase Hosting (live) whenever data/ changes on this branch. Signs in to
+# Google Cloud without a stored key (Workload Identity Federation); run
+# scripts/setup_github_deploy.sh once and add the GCP_WORKLOAD_IDENTITY_PROVIDER
+# and GCP_SERVICE_ACCOUNT repository variables, plus a GOOGLE_MAPS_API_KEY
+# repository secret. Until then it only builds.
+#
+# Only triggers on changes under data/ (not every push), since each build
+# calls the paid Google Geocoding/Distance Matrix APIs.
+name: Deploy to Firebase Hosting
+
+on:
+  push:
+    branches: [feature/firebase-hosting]
+    paths:
+      - "data/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build map data from the spreadsheet
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          pip install -r requirements.txt
+          python build_for_deploy.py
+
+      - name: Check Firebase setup
+        id: firebase
+        env:
+          PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          project=$(python -c "import json; print(json.load(open('.firebaserc'))['projects']['default'])")
+          if [ -z "$PROVIDER" ] || [ -z "$SERVICE_ACCOUNT" ] || [ "$project" = "your-firebase-project-id" ]; then
+            echo "::warning::Firebase is not set up yet (see README), so the map was built but not deployed."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "project=$project" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: google-github-actions/auth@v2
+        if: steps.firebase.outputs.ready == 'true'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Firebase Hosting
+        if: steps.firebase.outputs.ready == 'true'
+        env:
+          PROJECT: ${{ steps.firebase.outputs.project }}
+        run: |
+          npx --yes firebase-tools@15 deploy --only hosting:burnaby-map --project "$PROJECT" --non-interactive
+          echo "Live site: https://commuter-analysis-map-demo.web.app" >> "$GITHUB_STEP_SUMMARY"
