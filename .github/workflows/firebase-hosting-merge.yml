@@ -1,23 +1,68 @@
-name: Deploy to Firebase Hosting on merge
+# Builds the map from the worker spreadsheet in data/ and deploys it to
+# Firebase Hosting (live) whenever data/ changes on this branch. Signs in to
+# Google Cloud without a stored key (Workload Identity Federation); run
+# scripts/setup_github_deploy.sh once and add the GCP_WORKLOAD_IDENTITY_PROVIDER
+# and GCP_SERVICE_ACCOUNT repository variables, plus a GOOGLE_MAPS_API_KEY
+# repository secret. Until then it only builds.
+#
+# Only triggers on changes under data/ (not every push), since each build
+# calls the paid Google Geocoding/Distance Matrix APIs.
+name: Deploy to Firebase Hosting
+
 on:
   push:
-    branches:
-      - feature/firebase-hosting
+    branches: [feature/firebase-hosting]
+    paths:
+      - "data/**"
+  workflow_dispatch:
 
-# This project has no build step (it's a Python script, not an npm app), so
-# this workflow does NOT run generate_map.py -- it deploys whatever is
-# already committed in postal_code_map_output/ at push time. Run
-# generate_map.py locally (or in Colab) first, and make sure its output is
-# committed on this branch before pushing, or this step will fail/deploy
-# stale content. See README.md's "Deploying to Firebase Hosting" section.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
-  deploy:
+  build_and_deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: FirebaseExtended/action-hosting-deploy@v0
+
+      - uses: actions/setup-python@v5
         with:
-          repoToken: "${{ secrets.GITHUB_TOKEN }}"
-          firebaseServiceAccount: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_STONY_PLAIN_RD_COMPANIES_MAP }}"
-          channelId: live
-          projectId: stony-plain-rd-companies-map
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build map data from the spreadsheet
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          pip install -r requirements.txt
+          python build_for_deploy.py
+
+      - name: Check Firebase setup
+        id: firebase
+        env:
+          PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          project=$(python -c "import json; print(json.load(open('.firebaserc'))['projects']['default'])")
+          if [ -z "$PROVIDER" ] || [ -z "$SERVICE_ACCOUNT" ] || [ "$project" = "your-firebase-project-id" ]; then
+            echo "::warning::Firebase is not set up yet (see README), so the map was built but not deployed."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "project=$project" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: google-github-actions/auth@v2
+        if: steps.firebase.outputs.ready == 'true'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Firebase Hosting
+        if: steps.firebase.outputs.ready == 'true'
+        env:
+          PROJECT: ${{ steps.firebase.outputs.project }}
+        run: |
+          npx --yes firebase-tools@15 deploy --only hosting --project "$PROJECT" --non-interactive
+          echo "Live site: https://$PROJECT.web.app" >> "$GITHUB_STEP_SUMMARY"

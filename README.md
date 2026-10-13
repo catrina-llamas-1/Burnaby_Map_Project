@@ -122,45 +122,64 @@ employee postal codes/addresses — don't commit it to a public repo.
 
 ## Deploying to Firebase Hosting
 
-`firebase.json` points Firebase Hosting's public directory at
-`postal_code_map_output/`, the generator's default output folder.
-`.firebaserc` links this repo to the `stony-plain-rd-companies-map`
-Firebase project.
+This mirrors the setup used by `catrina-llamas-1/Companies-amenities-map`
+(same Firebase project, same deploy pattern): upload a spreadsheet to the
+repo, push, and GitHub Actions builds and deploys automatically. No
+stored service-account key — auth uses Workload Identity Federation.
 
-### Manual deploy
+- `firebase.json` points Firebase Hosting's public directory at
+  `postal_code_map_output/`, the generator's default output folder.
+- `.firebaserc` links this repo to the `stony-plain-rd-companies-map`
+  Firebase project (shared with Companies-amenities-map).
+- `data/` holds the one input spreadsheet — see `data/README.md`. Upload
+  a new one there (GitHub web UI: **Add file → Upload files**) to update
+  the live map.
+- `build_for_deploy.py` finds that spreadsheet and runs `generate_map.py`
+  against it, producing `postal_code_map_output/`.
 
-1. Run `generate_map.py` to produce `postal_code_map_output/`.
+### Updating the live map
+
+Just replace the spreadsheet in `data/` and push/merge to
+`feature/firebase-hosting` (or open a PR touching `data/` for a 7-day
+preview link first). GitHub Actions does the rest. The workflows only
+trigger on changes under `data/`, not every push — each build calls the
+paid Google Geocoding/Distance Matrix APIs, so unrelated pushes (docs,
+code changes) don't burn API calls.
+
+### One-time setup (already done once for this project; redo per-repo)
+
+1. **GCP Workload Identity Federation**: run
+   `scripts/setup_github_deploy.sh` once, in [Google Cloud
+   Shell](https://shell.cloud.google.com), signed in as an owner of the
+   `stony-plain-rd-companies-map` Firebase project. It reuses that
+   project's existing `github-deploy` service account (created for
+   Companies-amenities-map) and adds a second OIDC provider trusting only
+   this repo, so it doesn't touch or collide with that repo's existing
+   access. It prints two values at the end.
+2. Add those as **repository variables** (not secrets) in
+   `catrina-llamas-1/Burnaby_Map_Project` → Settings → Secrets and
+   variables → Actions → Variables tab:
+   - `GCP_WORKLOAD_IDENTITY_PROVIDER`
+   - `GCP_SERVICE_ACCOUNT`
+3. Add a **repository secret** (Secrets tab — this one's sensitive) named
+   `GOOGLE_MAPS_API_KEY`: a Google Maps Platform key with the Geocoding
+   API and Distance Matrix API enabled and billing set up. Unlike
+   Companies-amenities-map, this project computes drive times and needs
+   its own key.
+
+Until both are set, pushes to `data/` still build the map (so you can
+verify `build_for_deploy.py` works) but skip the deploy step with a
+warning — see the "Check Firebase setup" step in
+`.github/workflows/firebase-hosting-merge.yml`.
+
+### Manual deploy (no GitHub Actions)
+
+1. Run `generate_map.py` to produce `postal_code_map_output/` (or
+   `python build_for_deploy.py` to build from whatever's in `data/`).
 2. Install the Firebase CLI if you haven't: `npm install -g firebase-tools`.
 3. From the repo root: `firebase login`, then `firebase deploy`.
 
-### Automatic deploy on push (GitHub Actions)
-
-`.github/workflows/firebase-hosting-merge.yml` deploys on every push to
-`feature/firebase-hosting`, using the `github-deploy@stony-plain-rd-
-companies-map.iam.gserviceaccount.com` service account. Two things have
-to be true for it to actually run successfully:
-
-1. **The service account key must exist as a secret in *this* GitHub
-   repo** (`catrina-llamas-1/Burnaby_Map_Project` → Settings → Secrets
-   and variables → Actions), named
-   `FIREBASE_SERVICE_ACCOUNT_STONY_PLAIN_RD_COMPANIES_MAP`. Even if this
-   Firebase project already deploys from another repo, GitHub secrets are
-   per-repo and don't carry over — this repo needs its own copy of that
-   key. Get it from Firebase Console → Project settings → Service
-   accounts → Generate new private key (or reuse the existing
-   `github-deploy@...` key if you still have it saved from the original
-   setup), then paste the full JSON as the secret's value.
-2. **`postal_code_map_output/` must actually be committed** on the branch
-   you push, since this workflow has no build step (it's a Python script,
-   not an npm app, so CI can't regenerate the map itself without your
-   Google Maps API key and input spreadsheet). Run `generate_map.py`
-   locally, then `git add -f postal_code_map_output` (it's gitignored by
-   default) before committing and pushing — **only do this if you're
-   comfortable with that data being in this repo's history**, since the
-   output can contain real employee postal codes/addresses. If this repo
-   is public, don't commit it this way; use the manual `firebase deploy`
-   path instead, or adapt the workflow to pull the spreadsheet and API key
-   from secrets and run the generator in CI.
+### Other static hosts
 
 The output is still a portable static site, so any other static host
 (GitHub Pages, S3, Netlify, etc.) works too if you'd rather use one of
