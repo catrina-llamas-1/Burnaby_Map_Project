@@ -130,7 +130,11 @@ stored service-account key — auth uses Workload Identity Federation.
 - `firebase.json` points Firebase Hosting's public directory at
   `postal_code_map_output/`, the generator's default output folder.
 - `.firebaserc` links this repo to the `stony-plain-rd-companies-map`
-  Firebase project (shared with Companies-amenities-map).
+  Firebase project (shared with Companies-amenities-map), but deploys to
+  its own Hosting **site**, `commuter-analysis-map-demo`, via the
+  `burnaby-map` target — not that project's default site, which
+  Companies-amenities-map already occupies. Live at
+  <https://commuter-analysis-map-demo.web.app>.
 - `data/` holds the one input spreadsheet — see `data/README.md`. Upload
   a new one there (GitHub web UI: **Add file → Upload files**) to update
   the live map.

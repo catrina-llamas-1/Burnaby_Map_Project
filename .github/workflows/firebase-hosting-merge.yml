@@ -64,5 +64,5 @@ jobs:
         env:
           PROJECT: ${{ steps.firebase.outputs.project }}
         run: |
-          npx --yes firebase-tools@15 deploy --only hosting --project "$PROJECT" --non-interactive
-          echo "Live site: https://$PROJECT.web.app" >> "$GITHUB_STEP_SUMMARY"
+          npx --yes firebase-tools@15 deploy --only hosting:burnaby-map --project "$PROJECT" --non-interactive
+          echo "Live site: https://commuter-analysis-map-demo.web.app" >> "$GITHUB_STEP_SUMMARY"

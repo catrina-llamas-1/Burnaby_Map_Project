@@ -1,5 +1,12 @@
 {
   "projects": {
     "default": "stony-plain-rd-companies-map"
+  },
+  "targets": {
+    "stony-plain-rd-companies-map": {
+      "hosting": {
+        "burnaby-map": ["commuter-analysis-map-demo"]
+      }
+    }
   }
 }

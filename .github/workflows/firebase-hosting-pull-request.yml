@@ -65,6 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           npx --yes firebase-tools@15 hosting:channel:deploy "pr-$PR" --expires 7d \
+            --only hosting:burnaby-map \
             --no-authorized-domains --project "$PROJECT" --json | tee deploy.json
           url=$(grep -o '"url": *"https://[^"]*"' deploy.json | head -1 | grep -o 'https://[^"]*')
           if [ -z "$url" ]; then
