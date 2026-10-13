@@ -66,7 +66,7 @@ if ! gcloud iam workload-identity-pools providers describe "${PROVIDER}" \
       --location=global --workload-identity-pool="${POOL}" >/dev/null 2>&1; then
   gcloud iam workload-identity-pools providers create-oidc "${PROVIDER}" \
     --location=global --workload-identity-pool="${POOL}" \
-    --display-name="GitHub repo (Burnaby_Map_Project)" \
+    --display-name="GitHub Burnaby map" \
     --issuer-uri="https://token.actions.githubusercontent.com" \
     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
     --attribute-condition="assertion.repository=='${REPO}'"
